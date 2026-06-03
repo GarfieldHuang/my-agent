@@ -1,4 +1,8 @@
-"""OpenAI OAuth 2.0 PKCE — 用 ChatGPT 帳號登入，不需要 API Key。"""
+"""OpenAI OAuth 2.0 PKCE — 用 ChatGPT 帳號（Plus/Pro）登入，不需要 API Key。
+
+技術細節參考自 openclaw/openclaw 的 openai-codex provider 實作。
+"""
+import base64
 import hashlib
 import json
 import os
@@ -16,16 +20,23 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
+# ── OAuth 設定 ────────────────────────────────────
+# 你需要去 https://platform.openai.com/settings/organization/apps
+# 申請自己的 OAuth App，把 client_id 填入 .env 的 OPENAI_CLIENT_ID
+#
+# Redirect URI 要設定成：http://localhost:1455/auth/callback
+
+AUTH_URL    = "https://auth.openai.com/oauth/authorize"
+TOKEN_URL   = "https://auth.openai.com/oauth/token"
+REDIRECT_URI = "http://localhost:1455/auth/callback"
+SCOPE       = "openid profile email offline_access"
+
 KEYCHAIN_SERVICE = "my-agent"
-KEYCHAIN_KEY = "openai-token"
+KEYCHAIN_KEY     = "openai-token"
 CONFIG_PATH = Path.home() / ".my-agent" / "config.json"
 
-AUTH_URL = "https://auth.openai.com/authorize"
-TOKEN_URL = "https://auth.openai.com/oauth/token"
-REDIRECT_URI = "http://localhost:8899/callback"
 
-
-# ── PKCE helpers ──────────────────────────────────
+# ── PKCE ─────────────────────────────────────────
 
 def _pkce_pair() -> tuple[str, str]:
     verifier = secrets.token_urlsafe(64)
@@ -34,7 +45,24 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-# ── Token 存取（存在 macOS Keychain）─────────────
+# ── JWT 解析（不驗簽，只讀 payload）─────────────
+
+def _decode_jwt_payload(token: str) -> dict:
+    try:
+        part = token.split(".")[1]
+        part += "=" * (4 - len(part) % 4)
+        return json.loads(base64.urlsafe_b64decode(part))
+    except Exception:
+        return {}
+
+
+def _extract_account_id(access_token: str) -> str | None:
+    payload = _decode_jwt_payload(access_token)
+    auth = payload.get("https://api.openai.com/auth", {})
+    return auth.get("chatgpt_account_id")
+
+
+# ── Token 儲存（macOS Keychain）──────────────────
 
 def _save_token(token: dict) -> None:
     if "expires_in" in token and "expires_at" not in token:
@@ -56,17 +84,11 @@ def _try_refresh(token: dict, client_id: str) -> dict | None:
     if not refresh:
         return None
     try:
-        data = {
-            "grant_type": "refresh_token",
-            "client_id": client_id,
+        resp = httpx.post(TOKEN_URL, data={
+            "grant_type":    "refresh_token",
+            "client_id":     client_id,
             "refresh_token": refresh,
-        }
-        # 如果有 client_secret（非公開 client），也一起帶上
-        secret = os.getenv("OPENAI_CLIENT_SECRET")
-        if secret:
-            data["client_secret"] = secret
-
-        resp = httpx.post(TOKEN_URL, data=data, timeout=10)
+        }, timeout=10)
         if resp.status_code == 200:
             new_token = {**token, **resp.json()}
             _save_token(new_token)
@@ -79,38 +101,40 @@ def _try_refresh(token: dict, client_id: str) -> dict | None:
 # ── 瀏覽器 OAuth 流程 ─────────────────────────────
 
 def _browser_oauth(client_id: str) -> dict:
-    """開瀏覽器讓用戶登入 OpenAI，回傳 token dict。"""
+    """開瀏覽器讓用戶用 ChatGPT 帳號授權，回傳 token dict。"""
     verifier, challenge = _pkce_pair()
     state = secrets.token_urlsafe(16)
 
-    params = {
-        "response_type": "code",
-        "client_id": client_id,
-        "redirect_uri": REDIRECT_URI,
-        "scope": "openid",
-        "state": state,
-        "code_challenge": challenge,
-        "code_challenge_method": "S256",
-    }
-    auth_url = AUTH_URL + "?" + urlencode(params)
+    auth_url = AUTH_URL + "?" + urlencode({
+        "response_type":            "code",
+        "client_id":                client_id,
+        "redirect_uri":             REDIRECT_URI,
+        "scope":                    SCOPE,
+        "state":                    state,
+        "code_challenge":           challenge,
+        "code_challenge_method":    "S256",
+        # OpenAI 專用參數（參考 openclaw 實作）
+        "id_token_add_organizations": "true",
+        "codex_cli_simplified_flow":  "true",
+    })
 
-    # 本機 callback server
     bucket: dict = {}
     app = FastAPI()
 
-    @app.get("/callback")
+    @app.get("/auth/callback")
     async def callback(code: str, state: str = ""):
         bucket["code"] = code
         return HTMLResponse(
-            "<h1 style='font-family:sans-serif;text-align:center;padding-top:20vh;color:#10a37f'>"
+            "<h1 style='font-family:sans-serif;text-align:center;"
+            "padding-top:20vh;color:#10a37f'>"
             "✓ 認證成功！請關閉此視窗回到終端機。</h1>"
         )
 
-    server = uvicorn.Server(uvicorn.Config(app, host="localhost", port=8899, log_level="error"))
+    server = uvicorn.Server(uvicorn.Config(app, host="localhost", port=1455, log_level="error"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
 
-    print("\n[Auth] 開啟瀏覽器，請用你的 OpenAI 帳號登入…")
+    print("\n[Auth] 開啟瀏覽器，請用你的 ChatGPT 帳號（Plus/Pro）登入並授權…")
     webbrowser.open(auth_url)
 
     for _ in range(300):
@@ -121,19 +145,13 @@ def _browser_oauth(client_id: str) -> dict:
     else:
         raise TimeoutError("OAuth 認證逾時（5 分鐘）")
 
-    # 交換 token
-    data = {
-        "grant_type": "authorization_code",
-        "client_id": client_id,
-        "code": bucket["code"],
-        "redirect_uri": REDIRECT_URI,
+    resp = httpx.post(TOKEN_URL, data={
+        "grant_type":    "authorization_code",
+        "client_id":     client_id,
+        "code":          bucket["code"],
+        "redirect_uri":  REDIRECT_URI,
         "code_verifier": verifier,
-    }
-    secret = os.getenv("OPENAI_CLIENT_SECRET")
-    if secret:
-        data["client_secret"] = secret
-
-    resp = httpx.post(TOKEN_URL, data=data, timeout=10)
+    }, timeout=10)
     resp.raise_for_status()
     return resp.json()
 
@@ -146,8 +164,9 @@ def get_access_token() -> str:
     if not client_id:
         raise EnvironmentError(
             "未設定 OPENAI_CLIENT_ID。\n"
-            "請複製 .env.example → .env 並填入 client_id。\n"
-            "申請網址：https://platform.openai.com/settings/organization/apps"
+            "請複製 .env.example → .env 並填入你的 OAuth App client_id。\n"
+            "申請網址：https://platform.openai.com/settings/organization/apps\n"
+            "Redirect URI 設定為：http://localhost:1455/auth/callback"
         )
 
     token = _load_token()
@@ -160,16 +179,27 @@ def get_access_token() -> str:
         if refreshed:
             return refreshed["access_token"]
 
-    # 需要重新登入
     token = _browser_oauth(client_id)
     _save_token(token)
-    print("[Auth] ✓ 登入成功，token 已存入 Keychain。\n")
+    print("[Auth] ✓ 登入成功！\n")
     return token["access_token"]
 
 
 def get_openai_client():
+    """建立 OpenAI client，帶上 ChatGPT OAuth 所需的 headers。"""
     from openai import AsyncOpenAI
-    return AsyncOpenAI(api_key=get_access_token())
+
+    access_token = get_access_token()
+    account_id = _extract_account_id(access_token)
+
+    extra_headers = {"originator": "my-agent"}
+    if account_id:
+        extra_headers["chatgpt-account-id"] = account_id
+
+    return AsyncOpenAI(
+        api_key=access_token,
+        default_headers=extra_headers,
+    )
 
 
 def logout() -> None:
