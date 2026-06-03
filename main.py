@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""My Agent CLI — OpenAI + MCP + 檔案上傳"""
+"""My Agent — OpenAI OAuth + MCP + 檔案上傳"""
 import asyncio
-import os
 from pathlib import Path
 
 import click
@@ -24,13 +23,15 @@ async def _run_agent(system_prompt: str):
     from agent.mcp_manager import MCPManager
 
     try:
-        client = get_openai_client()
+        client = get_openai_client()   # 若未登入，自動開瀏覽器 OAuth
     except EnvironmentError as e:
         console.print(f"[red]{e}[/red]")
         return
+    except Exception as e:
+        console.print(f"[red]登入失敗：{e}[/red]")
+        return
 
     mcp = MCPManager(config_path="mcp_config.yaml")
-
     console.print("[dim]啟動 MCP servers...[/dim]")
     await mcp.start()
 
@@ -38,18 +39,14 @@ async def _run_agent(system_prompt: str):
     if tools:
         console.print(f"[green]✓ 已載入 {len(tools)} 個工具：{', '.join(tools)}[/green]")
     else:
-        console.print("[yellow]△ 沒有載入任何 MCP tool（執行 python main.py setup 可新增）[/yellow]")
+        console.print("[yellow]△ 沒有 MCP tool（執行 python main.py setup 可新增）[/yellow]")
 
-    agent = Agent(
-        client=client,
-        mcp=mcp,
-        model=get_model(),
-        system_prompt=system_prompt,
-    )
+    model = get_model()
+    agent = Agent(client=client, mcp=mcp, model=model, system_prompt=system_prompt)
 
     console.print(Panel(
-        f"[bold]My Agent[/bold]（{get_model()}）已就緒\n"
-        "輸入 [cyan]/file <路徑>[/cyan] 附加檔案，[cyan]/clear[/cyan] 清除對話，[cyan]/quit[/cyan] 離開",
+        f"[bold]My Agent[/bold]（{model}）已就緒\n"
+        "/file <路徑>  附加檔案    /clear  清除對話    /logout  登出    /quit  離開",
         border_style="blue",
     ))
 
@@ -65,12 +62,18 @@ async def _run_agent(system_prompt: str):
             if not raw.strip():
                 continue
 
-            if raw.strip() == "/quit":
-                break
-            if raw.strip() == "/clear":
-                agent.clear_history()
-                console.print("[dim]✓ 對話已清除[/dim]")
-                continue
+            match raw.strip():
+                case "/quit":
+                    break
+                case "/clear":
+                    agent.clear_history()
+                    console.print("[dim]✓ 對話已清除[/dim]")
+                    continue
+                case "/logout":
+                    from agent.auth import logout
+                    logout()
+                    break
+
             if raw.startswith("/file "):
                 fpath = raw[6:].strip()
                 if Path(fpath).exists():
@@ -96,35 +99,29 @@ async def _run_agent(system_prompt: str):
         await agent.files.delete_cached()
 
 
-# ── CLI commands ──────────────────────────────────
+# ── CLI ───────────────────────────────────────────
 
 @click.group(invoke_without_command=True)
 @click.pass_context
 @click.option("--system", default="You are a helpful assistant.", help="System prompt")
 def cli(ctx, system):
-    """My Agent — 你的私人 AI agent"""
+    """My Agent — 用 OpenAI 帳號登入，不需要 API Key"""
     if ctx.invoked_subcommand is None:
         asyncio.run(_run_agent(system))
 
 
 @cli.command()
 def setup():
-    """互動式設定精靈（API Key、模型、MCP 工具）"""
+    """互動式設定精靈（登入、模型、MCP 工具）"""
     from agent.wizard import run_setup
     run_setup()
 
 
 @cli.command()
-def reset():
-    """清除所有設定（API Key、config）"""
-    from agent.auth import delete_api_key, CONFIG_PATH
-    from rich.prompt import Confirm
-
-    if Confirm.ask("[red]確定要清除所有設定？[/red]", default=False):
-        delete_api_key()
-        if CONFIG_PATH.exists():
-            CONFIG_PATH.unlink()
-        console.print("[green]✓ 已清除。[/green]")
+def logout():
+    """登出（清除 Keychain 中的 token）"""
+    from agent.auth import logout as _logout
+    _logout()
 
 
 if __name__ == "__main__":

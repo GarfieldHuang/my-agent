@@ -8,4 +8,4 @@ rich>=13.7.0
 click>=8.1.7
 pyyaml>=6.0.1
 anyio>=4.4.0
-keyring>=25.0.0
+python-multipart>=0.0.9
