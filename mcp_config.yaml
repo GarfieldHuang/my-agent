@@ -1,0 +1,20 @@
+# MCP Servers 設定
+# 每個 server 會自動啟動並把 tools 合併到 agent 可用的工具池
+
+servers:
+  # 範例：本機檔案系統（stdio transport）
+  # filesystem:
+  #   transport: stdio
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+  # 範例：遠端 SSE server
+  # my-remote-server:
+  #   transport: sse
+  #   url: http://localhost:3001/sse
+
+  # 範例：自己的 Python MCP server
+  # my-tools:
+  #   transport: stdio
+  #   command: python
+  #   args: ["my_mcp_server.py"]
