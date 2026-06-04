@@ -70,11 +70,15 @@ class Agent:
             ) as stream:
                 response = await stream.get_final_response()
 
-            # ── DEBUG：印出原始 response 結構 ──
-            print("\n[DEBUG] response.output:")
-            for i, item in enumerate(response.output):
-                print(f"  [{i}] type={getattr(item, 'type', '?')!r}  item={item!r}")
-            print()
+            # ── DEBUG：印出完整 response ──
+            print(f"\n[DEBUG] response type: {type(response)}")
+            print(f"[DEBUG] response fields: {[f for f in dir(response) if not f.startswith('_')]}")
+            try:
+                print(f"[DEBUG] response dict: {response.model_dump()}")
+            except Exception as e:
+                print(f"[DEBUG] model_dump error: {e}")
+                print(f"[DEBUG] response repr: {response!r}")
+            print(f"\n[DEBUG] response.output ({len(response.output)} items):")
 
             # 分類 output items
             text_blocks = []
