@@ -1,39 +1,45 @@
 #!/usr/bin/env python3
-"""My Agent — OpenAI OAuth + MCP + 檔案上傳"""
-import asyncio
+"""My Agent — GUI（預設）或 CLI（--cli）模式"""
 import sys
-from pathlib import Path
 
-# Windows 上 Python 預設用 ProactorEventLoop，與 uvicorn 的 OAuth callback server 不相容
+# Windows asyncio fix（uvicorn OAuth callback server 需要 SelectorEventLoop）
 if sys.platform == "win32":
+    import asyncio
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+import asyncio
+from pathlib import Path
 
 import click
 from dotenv import load_dotenv
-from rich.console import Console
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.prompt import Prompt
 
 load_dotenv()
 
-console = Console()
+
+# ── GUI 模式 ──────────────────────────────────────
+
+def launch_gui():
+    from gui.app import App
+    app = App()
+    app.mainloop()
 
 
-# ── Chat ─────────────────────────────────────────
+# ── CLI 模式 ──────────────────────────────────────
 
-async def _run_agent(system_prompt: str):
+async def _run_cli(system_prompt: str):
+    from rich.console import Console
+    from rich.markdown import Markdown
+    from rich.panel import Panel
+    from rich.prompt import Prompt
     from agent.auth import get_model, get_openai_client
     from agent.core import Agent
     from agent.mcp_manager import MCPManager
 
+    console = Console()
     try:
-        client = get_openai_client()   # 若未登入，自動開瀏覽器 OAuth
+        client = get_openai_client()
     except EnvironmentError as e:
         console.print(f"[red]{e}[/red]")
-        return
-    except Exception as e:
-        console.print(f"[red]登入失敗：{e}[/red]")
         return
 
     mcp = MCPManager(config_path="mcp_config.yaml")
@@ -43,20 +49,17 @@ async def _run_agent(system_prompt: str):
     tools = mcp.list_tools()
     if tools:
         console.print(f"[green]✓ 已載入 {len(tools)} 個工具：{', '.join(tools)}[/green]")
-    else:
-        console.print("[yellow]△ 沒有 MCP tool（執行 python main.py setup 可新增）[/yellow]")
 
     model = get_model()
     agent = Agent(client=client, mcp=mcp, model=model, system_prompt=system_prompt)
 
     console.print(Panel(
-        f"[bold]My Agent[/bold]（{model}）已就緒\n"
+        f"[bold]My Agent[/bold]（{model}）\n"
         "/file <路徑>  附加檔案    /clear  清除對話    /logout  登出    /quit  離開",
         border_style="blue",
     ))
 
     pending_files: list[str] = []
-
     try:
         while True:
             try:
@@ -66,36 +69,30 @@ async def _run_agent(system_prompt: str):
 
             if not raw.strip():
                 continue
-
             match raw.strip():
-                case "/quit":
-                    break
-                case "/clear":
-                    agent.clear_history()
-                    console.print("[dim]✓ 對話已清除[/dim]")
-                    continue
+                case "/quit":  break
+                case "/clear": agent.clear_history(); console.print("[dim]✓ 清除[/dim]"); continue
                 case "/logout":
                     from agent.auth import logout
-                    logout()
-                    break
+                    logout(); break
 
             if raw.startswith("/file "):
-                fpath = raw[6:].strip()
-                if Path(fpath).exists():
-                    pending_files.append(fpath)
-                    console.print(f"[dim]✓ 已附加：{fpath}[/dim]")
+                p = raw[6:].strip()
+                if Path(p).exists():
+                    pending_files.append(p)
+                    console.print(f"[dim]✓ 已附加：{p}[/dim]")
                 else:
-                    console.print(f"[red]找不到檔案：{fpath}[/red]")
+                    console.print(f"[red]找不到：{p}[/red]")
                 continue
 
-            attachments, pending_files = pending_files, []
+            atts, pending_files = pending_files, []
             with console.status("[dim]思考中...[/dim]", spinner="dots"):
                 try:
-                    reply = await agent.chat(raw, attachments=attachments)
+                    reply = await agent.chat(raw, attachments=atts)
                 except Exception as e:
-                    console.print(f"[red]錯誤：{e}[/red]")
-                    continue
+                    console.print(f"[red]{e}[/red]"); continue
 
+            from rich.console import Console
             console.print()
             console.print(Panel(Markdown(reply), title="[bold green]Agent[/bold green]", border_style="green"))
             console.print()
@@ -104,30 +101,34 @@ async def _run_agent(system_prompt: str):
         await agent.files.delete_cached()
 
 
-# ── CLI ───────────────────────────────────────────
+# ── Entry point ───────────────────────────────────
 
 @click.group(invoke_without_command=True)
 @click.pass_context
-@click.option("--system", default="You are a helpful assistant.", help="System prompt")
-def cli(ctx, system):
+@click.option("--cli",    is_flag=True, help="終端機模式（不開 GUI）")
+@click.option("--system", default="You are a helpful assistant.", help="System prompt（CLI 模式用）")
+def main(ctx, cli, system):
     """My Agent — 用 OpenAI 帳號登入，不需要 API Key"""
     if ctx.invoked_subcommand is None:
-        asyncio.run(_run_agent(system))
+        if cli:
+            asyncio.run(_run_cli(system))
+        else:
+            launch_gui()
 
 
-@cli.command()
+@main.command()
 def setup():
-    """互動式設定精靈（登入、模型、MCP 工具）"""
+    """互動式設定精靈（CLI）"""
     from agent.wizard import run_setup
     run_setup()
 
 
-@cli.command()
+@main.command()
 def logout():
-    """登出（清除 Keychain 中的 token）"""
-    from agent.auth import logout as _logout
-    _logout()
+    """登出（清除本機 token）"""
+    from agent.auth import logout as _lo
+    _lo()
 
 
 if __name__ == "__main__":
-    cli()
+    main()

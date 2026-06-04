@@ -259,6 +259,26 @@ def logout() -> None:
     print("✓ 已登出。" if cleared else "（沒有找到已儲存的登入資訊）")
 
 
+def has_valid_token() -> bool:
+    """有沒有有效的 token（不觸發 OAuth）。"""
+    token = _load_token()
+    return bool(token and not _is_expired(token))
+
+
+def get_user_info() -> dict:
+    """從 JWT 提取用戶資訊，供 GUI 顯示。"""
+    token = _load_token()
+    if not token:
+        return {}
+    payload = _decode_jwt_payload(token.get("access_token", ""))
+    auth    = payload.get("https://api.openai.com/auth", {})
+    profile = payload.get("https://api.openai.com/profile", {})
+    return {
+        "email": profile.get("email", ""),
+        "plan":  auth.get("chatgpt_plan_type", ""),
+    }
+
+
 def get_model() -> str:
     cfg = load_config()
     return cfg.get("model") or os.getenv("OPENAI_MODEL", "gpt-4o")
