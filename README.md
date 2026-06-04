@@ -58,11 +58,34 @@ python main.py setup   # 選 ③ MCP 工具，用問答方式新增
 
 ```yaml
 servers:
+  # 本機 stdio server
   filesystem:
     transport: stdio
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+  # 遠端 SSE server
+  my-remote:
+    transport: sse
+    url: http://localhost:3001/sse
 ```
+
+### 自動注入參數（inject）
+
+有些 MCP server 的工具需要傳入 `api_key` 或其他認證參數。
+直接設定 `inject`，agent 會自動帶入這些值，**模型不需要知道、也不會被問到**：
+
+```yaml
+servers:
+  mssql:
+    transport: stdio
+    command: python
+    args: ["C:\\path\\to\\server.py"]
+    inject:
+      api_key: your-secret-key-here   # 自動注入，模型看不到這個參數
+```
+
+`inject` 的 key 對應工具 schema 裡的參數名稱，支援任意數量。
 
 ---
 
