@@ -164,7 +164,12 @@ class Agent:
                     log.warning("TOOL 連續 %d 輪全部錯誤，強制跳出", consecutive_errors)
                     input_items.append({
                         "role": "user",
-                        "content": "工具連續回傳錯誤，請直接把錯誤原因告訴使用者，不要再呼叫工具。",
+                        "content": (
+                            "工具連續回傳錯誤。請根據錯誤訊息：\n"
+                            "1. 告訴使用者問題的原因\n"
+                            "2. 提供具體的修復步驟\n"
+                            "3. 不要再呼叫工具"
+                        ),
                     })
                     break
             else:
