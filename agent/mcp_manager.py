@@ -1,6 +1,11 @@
-"""管理多個 MCP server 連線，並把所有 tools 合併成 OpenAI function calling 格式。"""
-import asyncio
-from contextlib import asynccontextmanager
+"""管理多個 MCP server 連線，並把所有 tools 合併成 OpenAI Responses API 格式。
+
+支援 inject 參數自動注入：
+  在 mcp_config.yaml 的 server 底下加 inject 區段，
+  指定的參數會自動帶入工具呼叫，並從送給模型的 schema 中移除。
+  模型不需要知道這些參數的存在。
+"""
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,7 +25,8 @@ class ToolEntry:
     name: str
     server_name: str
     session: ClientSession
-    schema: dict  # OpenAI function definition
+    schema: dict        # 送給模型的 schema（已移除 inject 參數）
+    inject: dict = field(default_factory=dict)  # 自動注入的參數值
 
 
 class MCPManager:
@@ -35,7 +41,6 @@ class MCPManager:
     # ── Lifecycle ─────────────────────────────────
 
     async def start(self) -> None:
-        """啟動所有設定的 MCP server 並收集 tools。"""
         config = self._load_config()
         servers = config.get("servers") or {}
         for name, spec in servers.items():
@@ -44,7 +49,8 @@ class MCPManager:
             try:
                 session = await self._connect(name, spec)
                 self._sessions.append(session)
-                await self._register_tools(name, session)
+                inject = spec.get("inject") or {}
+                await self._register_tools(name, session, inject)
             except Exception as e:
                 print(f"[MCP] ⚠ 無法連線 {name!r}: {e}")
 
@@ -58,18 +64,20 @@ class MCPManager:
     # ── Tool access ───────────────────────────────
 
     def openai_tools(self) -> list[dict]:
-        """回傳可直接傳給 OpenAI API 的 tools 陣列。"""
+        """回傳送給模型的 tools 陣列（已隱藏 inject 參數）。"""
         return [entry.schema for entry in self._tools.values()]
 
     async def call(self, tool_name: str, arguments: dict) -> str:
-        """執行指定工具，回傳純文字結果。"""
+        """執行指定工具，自動補入 inject 參數後呼叫。"""
         entry = self._tools.get(tool_name)
         if entry is None:
             raise KeyError(f"找不到工具 {tool_name!r}，可用：{list(self._tools)}")
 
-        result = await entry.session.call_tool(tool_name, arguments)
+        # 注入參數（模型看不到，但 server 需要）
+        full_args = {**entry.inject, **arguments}
 
-        # 把 MCP content 塊轉成純文字
+        result = await entry.session.call_tool(tool_name, full_args)
+
         parts = []
         for block in result.content:
             if hasattr(block, "text"):
@@ -99,11 +107,11 @@ class MCPManager:
                 args=spec.get("args", []),
                 env=spec.get("env"),
             )
-            read, write, closer = await self._enter(stdio_client(params))
+            read, write, _ = await self._enter(stdio_client(params))
         elif transport == "sse":
             if not HAS_SSE:
                 raise ImportError("需要安裝 mcp[sse] 才能使用 SSE transport")
-            read, write, closer = await self._enter(sse_client(spec["url"]))
+            read, write, _ = await self._enter(sse_client(spec["url"]))
         else:
             raise ValueError(f"未知 transport: {transport!r}")
 
@@ -114,24 +122,41 @@ class MCPManager:
         return session
 
     async def _enter(self, cm):
-        """手動進入 async context manager，回傳 (read, write, closer)。"""
         result = await cm.__aenter__()
         self._exit_stack_closers.append(cm.__aexit__)
         return *result, cm.__aexit__
 
-    async def _register_tools(self, server_name: str, session: ClientSession) -> None:
+    async def _register_tools(
+        self, server_name: str, session: ClientSession, inject: dict
+    ) -> None:
         response = await session.list_tools()
         for tool in response.tools:
-            # Responses API 用扁平格式（不是 Chat Completions 的 function 巢狀）
+            # 從 schema 移除 inject 參數——模型不需要知道這些
+            raw_params = tool.inputSchema or {"type": "object", "properties": {}}
+            params = _strip_inject_params(raw_params, inject)
+
             schema = {
                 "type":        "function",
                 "name":        tool.name,
                 "description": tool.description or "",
-                "parameters":  tool.inputSchema or {"type": "object", "properties": {}},
+                "parameters":  params,
             }
             self._tools[tool.name] = ToolEntry(
                 name=tool.name,
                 server_name=server_name,
                 session=session,
                 schema=schema,
+                inject=inject,
             )
+
+
+def _strip_inject_params(schema: dict, inject: dict) -> dict:
+    """從 JSON Schema 移除會被自動注入的參數，避免模型看到並嘗試填寫。"""
+    if not inject:
+        return schema
+    schema = copy.deepcopy(schema)
+    props = schema.get("properties", {})
+    schema["properties"] = {k: v for k, v in props.items() if k not in inject}
+    if "required" in schema:
+        schema["required"] = [r for r in schema["required"] if r not in inject]
+    return schema

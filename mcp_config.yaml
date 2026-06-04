@@ -1,5 +1,8 @@
 # MCP Servers 設定
 # 每個 server 會自動啟動並把 tools 合併到 agent 可用的工具池
+#
+# inject：自動注入到工具呼叫的參數，模型看不到也不需要填寫。
+# 適合用於 api_key、auth_token 等認證參數。
 
 servers:
   # 範例：本機檔案系統（stdio transport）
@@ -13,8 +16,10 @@ servers:
   #   transport: sse
   #   url: http://localhost:3001/sse
 
-  # 範例：自己的 Python MCP server
+  # 範例：自己的 Python MCP server（含 inject）
   # my-tools:
   #   transport: stdio
   #   command: python
   #   args: ["my_mcp_server.py"]
+  #   inject:
+  #     api_key: your-secret-key
