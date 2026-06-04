@@ -118,8 +118,11 @@ class Agent:
                 try:
                     raw  = fc["arguments"].strip()
                     args = json.loads(raw) if raw else {}
+                    print(f"[TOOL] calling {fc['name']} args={args!r}")
                     result = await self.mcp.call(fc["name"], args)
+                    print(f"[TOOL] result={result!r}")
                 except Exception as e:
+                    print(f"[TOOL] error={type(e).__name__}: {e}")
                     result = f"[ERROR] {e}"
 
                 input_items.append({

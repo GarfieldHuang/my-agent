@@ -75,8 +75,10 @@ class MCPManager:
 
         # 注入參數（模型看不到，但 server 需要）
         full_args = {**entry.inject, **arguments}
+        print(f"[MCP] call_tool name={tool_name!r} full_args={full_args!r}")
 
         result = await entry.session.call_tool(tool_name, full_args)
+        print(f"[MCP] raw result content={result.content!r}")
 
         parts = []
         for block in result.content:
