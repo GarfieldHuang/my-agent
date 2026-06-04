@@ -116,7 +116,8 @@ class Agent:
             # 執行工具，下一輪繼續
             for fc in fc_list:
                 try:
-                    args   = json.loads(fc["arguments"])
+                    raw  = fc["arguments"].strip()
+                    args = json.loads(raw) if raw else {}
                     result = await self.mcp.call(fc["name"], args)
                 except Exception as e:
                     result = f"[ERROR] {e}"
