@@ -1,8 +1,7 @@
 """設定頁面：模型選擇、system prompt。"""
 import customtkinter as ctk
 
-# ChatGPT 訂閱後端可用的 Codex 模型（不需要 API 帳戶餘額）
-MODELS = ["gpt-5.5-codex", "gpt-5.4-codex", "gpt-5.4-mini", "gpt-5.3-codex"]
+MODELS = ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro", "gpt-5.3-codex"]
 
 
 class SettingsView(ctk.CTkFrame):

@@ -239,13 +239,16 @@ def get_openai_client():
     access_token = get_access_token()
     account_id   = _extract_account_id(access_token)
 
-    extra_headers = {"originator": "my-agent"}
+    extra_headers = {
+        "originator":   "my-agent",
+        "OpenAI-Beta":  "responses=experimental",   # Codex 後端必要
+    }
     if account_id:
         extra_headers["chatgpt-account-id"] = account_id
 
     return AsyncOpenAI(
         api_key=access_token,
-        base_url=CODEX_BASE_URL,
+        base_url=CODEX_BASE_URL,          # chatgpt.com/backend-api/codex
         default_headers=extra_headers,
     )
 
@@ -285,7 +288,7 @@ def get_user_info() -> dict:
 
 def get_model() -> str:
     cfg = load_config()
-    return cfg.get("model") or os.getenv("OPENAI_MODEL", "gpt-5.4-codex")
+    return cfg.get("model") or os.getenv("OPENAI_MODEL", "gpt-5.4")
 
 
 def load_config() -> dict:

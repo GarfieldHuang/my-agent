@@ -1,14 +1,20 @@
-"""Agent 主迴圈：把 OpenAI、MCP tools、檔案上傳串在一起。"""
+"""Agent 主迴圈：使用 OpenAI Responses API 打 ChatGPT 訂閱後端。
+
+chatgpt.com/backend-api/codex/responses 使用 Responses API 格式，
+與 Chat Completions API 不同：
+  - 系統提示用 "instructions" 參數（或 input 裡的 "system" role）
+  - 工具呼叫結果用 {"type": "function_call_output", ...}
+  - store=False（Codex 後端不儲存對話）
+"""
 import json
 import os
 
-from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionMessageParam
+from openai import AsyncOpenAI, NOT_GIVEN
 
 from .files import FileUploader
 from .mcp_manager import MCPManager
 
-MAX_TOOL_ROUNDS = 10  # 防止無限 tool-call 迴圈
+MAX_TOOL_ROUNDS = 10
 
 
 class Agent:
@@ -19,17 +25,17 @@ class Agent:
         model: str | None = None,
         system_prompt: str = "You are a helpful assistant.",
     ):
-        self.client = client
-        self.mcp = mcp
-        self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o")
+        self.client        = client
+        self.mcp           = mcp
+        self.model         = model or os.getenv("OPENAI_MODEL", "gpt-5.4")
         self.system_prompt = system_prompt
-        self.files = FileUploader(client)
-        self.history: list[ChatCompletionMessageParam] = []
+        self.files         = FileUploader(client)
+        # history 存簡單的 user/assistant 字串對，送出時再組成 Responses API 格式
+        self.history: list[dict] = []
 
     # ── Public API ────────────────────────────────
 
     async def chat(self, user_input: str, attachments: list[str] | None = None) -> str:
-        """送出一輪對話，回傳 assistant 最終文字回覆。"""
         content = await self._build_content(user_input, attachments or [])
         self.history.append({"role": "user", "content": content})
 
@@ -40,72 +46,70 @@ class Agent:
     def clear_history(self) -> None:
         self.history.clear()
 
-    # ── Core loop ─────────────────────────────────
+    # ── Core loop（Responses API）─────────────────
 
     async def _run_loop(self) -> str:
-        """呼叫 OpenAI，處理 tool calls，直到模型給出純文字回覆。"""
+        """
+        Responses API 的 tool-call 迴圈。
+        每輪把完整 input（含 function_call_output）傳給模型，
+        直到模型不再呼叫工具為止。
+        """
         tools = self.mcp.openai_tools()
 
-        for round_num in range(MAX_TOOL_ROUNDS):
-            response = await self.client.chat.completions.create(
+        # Responses API 的 input：system + 對話歷史
+        input_items: list = [
+            {"role": "system", "content": self.system_prompt},
+            *self.history,
+        ]
+
+        for _ in range(MAX_TOOL_ROUNDS):
+            response = await self.client.responses.create(
                 model=self.model,
-                messages=self._system_messages(),
-                tools=tools if tools else None,
+                input=input_items,
+                tools=tools if tools else NOT_GIVEN,
+                store=False,   # Codex 後端必須 False
             )
 
-            message = response.choices[0].message
+            # 分類 output items
+            text_blocks  = []
+            func_calls   = []
+            for item in response.output:
+                if getattr(item, "type", None) == "message":
+                    for block in getattr(item, "content", []):
+                        if getattr(block, "type", None) == "output_text":
+                            text_blocks.append(block.text)
+                elif getattr(item, "type", None) == "function_call":
+                    func_calls.append(item)
 
-            # 模型直接回覆文字，結束迴圈
-            if not message.tool_calls:
-                return message.content or ""
+            # 沒有 tool call → 回傳文字
+            if not func_calls:
+                return "".join(text_blocks)
 
-            # 把 assistant 的 tool_call 意圖加入 history
-            self.history.append(message)
+            # 把 assistant 這輪的 output 加入 input（保留工具呼叫紀錄）
+            input_items.extend(response.output)
 
-            # 執行所有 tool calls（失敗時 _execute_tool_calls 會回傳錯誤字串給模型）
-            tool_results = await self._execute_tool_calls(message.tool_calls)
-            self.history.extend(tool_results)
+            # 執行所有工具，把結果加入 input
+            for tc in func_calls:
+                try:
+                    args   = json.loads(tc.arguments)
+                    result = await self.mcp.call(tc.name, args)
+                except Exception as e:
+                    result = f"[ERROR] {type(e).__name__}: {e}"
 
-        # 達到上限，要求模型根據目前資訊直接作答
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                *self._system_messages(),
-                {
-                    "role": "user",
-                    "content": "（已達工具呼叫上限，請根據目前資訊直接回覆）",
-                },
-            ],
-        )
-        return response.choices[0].message.content or ""
+                input_items.append({
+                    "type":    "function_call_output",
+                    "call_id": tc.call_id,
+                    "output":  result,
+                })
+
+        return "（已達工具呼叫上限）"
 
     # ── Helpers ───────────────────────────────────
-
-    def _system_messages(self) -> list[ChatCompletionMessageParam]:
-        return [{"role": "system", "content": self.system_prompt}, *self.history]
 
     async def _build_content(self, text: str, attachments: list[str]) -> list | str:
         if not attachments:
             return text
-        parts: list = [{"type": "text", "text": text}]
+        parts: list = [{"type": "input_text", "text": text}]
         for path in attachments:
             parts.append(await self.files.upload(path))
         return parts
-
-    async def _execute_tool_calls(self, tool_calls) -> list[ChatCompletionMessageParam]:
-        """執行一批 tool calls，回傳 tool result messages。"""
-        results = []
-        for tc in tool_calls:
-            fn = tc.function
-            try:
-                args = json.loads(fn.arguments)
-                output = await self.mcp.call(fn.name, args)
-            except Exception as e:
-                output = f"[ERROR] {type(e).__name__}: {e}"
-
-            results.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": output,
-            })
-        return results
