@@ -44,7 +44,8 @@ SCOPE        = "openid profile email offline_access"
 
 KEYCHAIN_SERVICE = "my-agent"
 KEYCHAIN_KEY     = "openai-token"
-CONFIG_PATH = Path.home() / ".my-agent" / "config.json"
+CONFIG_PATH  = Path.home() / ".my-agent" / "config.json"
+TOKEN_FILE   = Path.home() / ".my-agent" / "token.json"   # keyring fallback
 
 
 # ── PKCE ─────────────────────────────────────────
@@ -73,17 +74,36 @@ def _extract_account_id(access_token: str) -> str | None:
     return auth.get("chatgpt_account_id")
 
 
-# ── Token 儲存（macOS Keychain）──────────────────
+# ── Token 儲存（Keychain 優先，失敗 fallback 到檔案）──
+# Windows Credential Manager 有 2500 bytes 限制，JWT token 容易超過；
+# 公司 group policy 也可能禁止寫入。失敗時改存 ~/.my-agent/token.json。
 
 def _save_token(token: dict) -> None:
     if "expires_in" in token and "expires_at" not in token:
         token["expires_at"] = time.time() + token["expires_in"]
-    keyring.set_password(KEYCHAIN_SERVICE, KEYCHAIN_KEY, json.dumps(token))
+    data = json.dumps(token)
+    try:
+        keyring.set_password(KEYCHAIN_SERVICE, KEYCHAIN_KEY, data)
+    except Exception:
+        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        TOKEN_FILE.write_text(data, encoding="utf-8")
 
 
 def _load_token() -> dict | None:
-    raw = keyring.get_password(KEYCHAIN_SERVICE, KEYCHAIN_KEY)
-    return json.loads(raw) if raw else None
+    # 1. Keychain
+    try:
+        raw = keyring.get_password(KEYCHAIN_SERVICE, KEYCHAIN_KEY)
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        pass
+    # 2. 檔案 fallback
+    if TOKEN_FILE.exists():
+        try:
+            return json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return None
 
 
 def _is_expired(token: dict) -> bool:
@@ -227,11 +247,16 @@ def get_openai_client():
 
 
 def logout() -> None:
+    cleared = False
     try:
         keyring.delete_password(KEYCHAIN_SERVICE, KEYCHAIN_KEY)
-        print("✓ 已登出。")
+        cleared = True
     except Exception:
-        print("（沒有找到已儲存的登入資訊）")
+        pass
+    if TOKEN_FILE.exists():
+        TOKEN_FILE.unlink()
+        cleared = True
+    print("✓ 已登出。" if cleared else "（沒有找到已儲存的登入資訊）")
 
 
 def get_model() -> str:
