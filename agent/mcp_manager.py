@@ -122,13 +122,12 @@ class MCPManager:
     async def _register_tools(self, server_name: str, session: ClientSession) -> None:
         response = await session.list_tools()
         for tool in response.tools:
+            # Responses API 用扁平格式（不是 Chat Completions 的 function 巢狀）
             schema = {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description or "",
-                    "parameters": tool.inputSchema or {"type": "object", "properties": {}},
-                },
+                "type":        "function",
+                "name":        tool.name,
+                "description": tool.description or "",
+                "parameters":  tool.inputSchema or {"type": "object", "properties": {}},
             }
             self._tools[tool.name] = ToolEntry(
                 name=tool.name,
