@@ -21,15 +21,15 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 # ── OAuth 設定 ────────────────────────────────────
-# 你需要去 https://platform.openai.com/settings/organization/apps
-# 申請自己的 OAuth App，把 client_id 填入 .env 的 OPENAI_CLIENT_ID
-#
-# Redirect URI 要設定成：http://localhost:1455/auth/callback
+# 預設使用 openclaw 的 OAuth App（無需自行申請即可使用）。
+# 若要換成自己的 App，在 .env 設定 OPENAI_CLIENT_ID。
 
-AUTH_URL    = "https://auth.openai.com/oauth/authorize"
-TOKEN_URL   = "https://auth.openai.com/oauth/token"
-REDIRECT_URI = "http://localhost:1455/auth/callback"
-SCOPE       = "openid profile email offline_access"
+DEFAULT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+
+AUTH_URL     = "https://auth.openai.com/oauth/authorize"
+TOKEN_URL    = "https://auth.openai.com/oauth/token"
+REDIRECT_URI = "http://localhost:1455/auth/callback"   # 必須跟 client_id 登記的一致
+SCOPE        = "openid profile email offline_access"
 
 KEYCHAIN_SERVICE = "my-agent"
 KEYCHAIN_KEY     = "openai-token"
@@ -160,14 +160,7 @@ def _browser_oauth(client_id: str) -> dict:
 
 def get_access_token() -> str:
     """取得有效 access token；必要時開瀏覽器重新登入。"""
-    client_id = os.getenv("OPENAI_CLIENT_ID")
-    if not client_id:
-        raise EnvironmentError(
-            "未設定 OPENAI_CLIENT_ID。\n"
-            "請複製 .env.example → .env 並填入你的 OAuth App client_id。\n"
-            "申請網址：https://platform.openai.com/settings/organization/apps\n"
-            "Redirect URI 設定為：http://localhost:1455/auth/callback"
-        )
+    client_id = os.getenv("OPENAI_CLIENT_ID") or DEFAULT_CLIENT_ID
 
     token = _load_token()
 
