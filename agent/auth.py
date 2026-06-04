@@ -17,6 +17,16 @@ from urllib.parse import urlencode
 import certifi
 import httpx
 import keyring
+
+# ── SSL：優先用 OS 系統憑證庫（支援公司 proxy CA）──
+# truststore 讓 Python 讀 Windows/macOS/Linux 的系統憑證庫，
+# 跟瀏覽器用同一套 CA，公司 MITM proxy 就能過。
+try:
+    import truststore
+    truststore.inject_into_ssl()
+    _SSL_VERIFY = True          # truststore 已接管，用預設即可
+except ImportError:
+    _SSL_VERIFY = certifi.where()   # fallback：Mozilla CA bundle
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -89,7 +99,7 @@ def _try_refresh(token: dict, client_id: str) -> dict | None:
             "grant_type":    "refresh_token",
             "client_id":     client_id,
             "refresh_token": refresh,
-        }, timeout=10, verify=certifi.where())
+        }, timeout=10, verify=_SSL_VERIFY)
         if resp.status_code == 200:
             new_token = {**token, **resp.json()}
             _save_token(new_token)
@@ -172,7 +182,7 @@ def _browser_oauth(client_id: str) -> dict:
         "code":          bucket["code"],
         "redirect_uri":  REDIRECT_URI,
         "code_verifier": verifier,
-    }, timeout=10, verify=certifi.where())
+    }, timeout=10, verify=_SSL_VERIFY)
     resp.raise_for_status()
     return resp.json()
 
