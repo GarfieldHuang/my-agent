@@ -60,17 +60,19 @@ class Agent:
         input_items: list = list(self.history)
 
         for _ in range(MAX_TOOL_ROUNDS):
-            response = await self.client.responses.create(
+            # Codex 後端強制要求串流（stream must be true）
+            async with self.client.responses.stream(
                 model=self.model,
                 input=input_items,
                 instructions=self.system_prompt,
                 tools=tools if tools else NOT_GIVEN,
-                store=False,   # Codex 後端必須 False
-            )
+                store=False,
+            ) as stream:
+                response = await stream.get_final_response()
 
             # 分類 output items
-            text_blocks  = []
-            func_calls   = []
+            text_blocks = []
+            func_calls  = []
             for item in response.output:
                 if getattr(item, "type", None) == "message":
                     for block in getattr(item, "content", []):
@@ -79,14 +81,11 @@ class Agent:
                 elif getattr(item, "type", None) == "function_call":
                     func_calls.append(item)
 
-            # 沒有 tool call → 回傳文字
             if not func_calls:
                 return "".join(text_blocks)
 
-            # 把 assistant 這輪的 output 加入 input（保留工具呼叫紀錄）
             input_items.extend(response.output)
 
-            # 執行所有工具，把結果加入 input
             for tc in func_calls:
                 try:
                     args   = json.loads(tc.arguments)

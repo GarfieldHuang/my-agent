@@ -1,4 +1,4 @@
-openai>=1.35.0
+openai>=1.66.0
 mcp>=1.3.0
 fastapi>=0.111.0
 uvicorn>=0.30.0
