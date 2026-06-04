@@ -78,6 +78,8 @@ class Agent:
                 "summary": "auto",
             }
 
+        consecutive_errors = 0  # 連續全錯輪次計數
+
         for _ in range(MAX_TOOL_ROUNDS):
             thinking_chunks: list[str] = []
             text_chunks:     list[str] = []
@@ -129,6 +131,7 @@ class Agent:
                 return thinking, text
 
             # 執行工具，下一輪繼續
+            all_errors = True
             for fc in fc_list:
                 try:
                     raw  = fc["arguments"].strip()
@@ -136,6 +139,8 @@ class Agent:
                     log.debug("TOOL calling %s args=%r", fc["name"], args)
                     result = await self.mcp.call(fc["name"], args)
                     log.debug("TOOL result=%r", result)
+                    if not result.startswith("Error:") and not result.startswith("[ERROR]"):
+                        all_errors = False
                 except Exception as e:
                     log.error("TOOL error %s: %s", type(e).__name__, e)
                     result = f"[ERROR] {e}"
@@ -151,6 +156,19 @@ class Agent:
                     "call_id": fc["call_id"],
                     "output":  result,
                 })
+
+            # 連續兩輪全部都是錯誤 → 強制讓模型直接回報給使用者
+            if all_errors:
+                consecutive_errors += 1
+                if consecutive_errors >= 2:
+                    log.warning("TOOL 連續 %d 輪全部錯誤，強制跳出", consecutive_errors)
+                    input_items.append({
+                        "role": "user",
+                        "content": "工具連續回傳錯誤，請直接把錯誤原因告訴使用者，不要再呼叫工具。",
+                    })
+                    break
+            else:
+                consecutive_errors = 0
 
         return "", "（已達工具呼叫上限）"
 
