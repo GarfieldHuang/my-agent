@@ -1,11 +1,4 @@
-"""Agent 主迴圈：使用 OpenAI Responses API 打 ChatGPT 訂閱後端。
-
-chatgpt.com/backend-api/codex/responses 使用 Responses API 格式，
-與 Chat Completions API 不同：
-  - 系統提示用 "instructions" 參數（或 input 裡的 "system" role）
-  - 工具呼叫結果用 {"type": "function_call_output", ...}
-  - store=False（Codex 後端不儲存對話）
-"""
+"""Agent 主迴圈：使用 OpenAI Responses API 打 ChatGPT 訂閱後端。"""
 import json
 import os
 
@@ -30,7 +23,6 @@ class Agent:
         self.model         = model or os.getenv("OPENAI_MODEL", "gpt-5.4")
         self.system_prompt = system_prompt
         self.files         = FileUploader(client)
-        # history 存簡單的 user/assistant 字串對，送出時再組成 Responses API 格式
         self.history: list[dict] = []
 
     # ── Public API ────────────────────────────────
@@ -38,7 +30,6 @@ class Agent:
     async def chat(self, user_input: str, attachments: list[str] | None = None) -> str:
         content = await self._build_content(user_input, attachments or [])
         self.history.append({"role": "user", "content": content})
-
         reply = await self._run_loop()
         self.history.append({"role": "assistant", "content": reply})
         return reply
@@ -46,73 +37,73 @@ class Agent:
     def clear_history(self) -> None:
         self.history.clear()
 
-    # ── Core loop（Responses API）─────────────────
+    # ── Core loop ─────────────────────────────────
 
     async def _run_loop(self) -> str:
-        """
-        Responses API 的 tool-call 迴圈。
-        每輪把完整 input（含 function_call_output）傳給模型，
-        直到模型不再呼叫工具為止。
-        """
         tools = self.mcp.openai_tools()
-
-        # Codex 後端要求 instructions 用獨立參數，不能放在 input 陣列
         input_items: list = list(self.history)
 
         for _ in range(MAX_TOOL_ROUNDS):
-            # Codex 後端強制要求串流（stream must be true）
-            async with self.client.responses.stream(
+            # 手動迭代 SSE events（get_final_response() 的 output 是空的）
+            text_chunks: list[str] = []
+            func_calls: dict = {}   # call_id → {name, arguments, call_id}
+
+            stream = await self.client.responses.create(
                 model=self.model,
                 input=input_items,
                 instructions=self.system_prompt,
                 tools=tools if tools else NOT_GIVEN,
                 store=False,
-            ) as stream:
-                response = await stream.get_final_response()
+                stream=True,
+            )
 
-            # ── DEBUG：印出完整 response ──
-            print(f"\n[DEBUG] response type: {type(response)}")
-            print(f"[DEBUG] response fields: {[f for f in dir(response) if not f.startswith('_')]}")
-            try:
-                print(f"[DEBUG] response dict: {response.model_dump()}")
-            except Exception as e:
-                print(f"[DEBUG] model_dump error: {e}")
-                print(f"[DEBUG] response repr: {response!r}")
-            print(f"\n[DEBUG] response.output ({len(response.output)} items):")
+            async for event in stream:
+                etype = getattr(event, "type", "")
+                print(f"[DEBUG] {etype!r}  {event!r}")
 
-            # 分類 output items
-            text_blocks = []
-            func_calls  = []
-            for item in response.output:
-                itype = getattr(item, "type", None)
-                if itype == "message":
-                    for block in getattr(item, "content", []):
-                        btype = getattr(block, "type", None)
-                        btext = getattr(block, "text", None)
-                        print(f"  [DEBUG] message block type={btype!r} text={btext!r}")
-                        if btype == "output_text" and btext:
-                            text_blocks.append(btext)
-                elif itype == "function_call":
-                    func_calls.append(item)
+                if etype == "response.output_text.delta":
+                    text_chunks.append(getattr(event, "delta", ""))
 
-            print(f"[DEBUG] text_blocks={text_blocks}  func_calls={len(func_calls)}\n")
+                elif etype == "response.output_item.added":
+                    item = getattr(event, "item", None)
+                    if item and getattr(item, "type", "") == "function_call":
+                        cid = item.call_id
+                        func_calls[cid] = {
+                            "call_id": cid,
+                            "name": item.name,
+                            "arguments": "",
+                        }
 
-            if not func_calls:
-                return "".join(text_blocks)
+                elif etype == "response.function_call_arguments.delta":
+                    cid = getattr(event, "call_id", None)
+                    if cid and cid in func_calls:
+                        func_calls[cid]["arguments"] += getattr(event, "delta", "")
 
-            input_items.extend(response.output)
+            text    = "".join(text_chunks)
+            fc_list = list(func_calls.values())
+            print(f"[DEBUG] text={text!r}  func_calls={[f['name'] for f in fc_list]}\n")
 
-            for tc in func_calls:
+            if not fc_list:
+                return text
+
+            # 執行工具，繼續下一輪
+            for fc in fc_list:
                 try:
-                    args   = json.loads(tc.arguments)
-                    result = await self.mcp.call(tc.name, args)
+                    args   = json.loads(fc["arguments"])
+                    result = await self.mcp.call(fc["name"], args)
                 except Exception as e:
-                    result = f"[ERROR] {type(e).__name__}: {e}"
+                    result = f"[ERROR] {e}"
 
                 input_items.append({
                     "type":    "function_call_output",
-                    "call_id": tc.call_id,
+                    "call_id": fc["call_id"],
                     "output":  result,
+                })
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": fc["call_id"],
+                    "name": fc["name"],
+                    "arguments": fc["arguments"],
                 })
 
         return "（已達工具呼叫上限）"
