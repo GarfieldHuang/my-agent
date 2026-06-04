@@ -114,14 +114,28 @@ class Agent:
                         func_calls[cid] = {
                             "call_id":   cid,
                             "name":      item.name,
-                            "arguments": "",
+                            "arguments": getattr(item, "arguments", "") or "",
                         }
+                        log.debug("TOOL item.added call_id=%s name=%s args=%r",
+                                  cid, item.name, func_calls[cid]["arguments"])
 
                 # ── 工具呼叫：參數串流 ─────────────────
                 elif etype == "response.function_call_arguments.delta":
                     cid = getattr(event, "call_id", None)
+                    delta = getattr(event, "delta", "")
+                    log.debug("TOOL args.delta call_id=%s delta=%r", cid, delta)
                     if cid and cid in func_calls:
-                        func_calls[cid]["arguments"] += getattr(event, "delta", "")
+                        func_calls[cid]["arguments"] += delta
+
+                # ── 工具呼叫：完成（以完整 arguments 覆蓋 delta 累積值）
+                elif etype == "response.output_item.done":
+                    item = getattr(event, "item", None)
+                    if item and getattr(item, "type", "") == "function_call":
+                        cid = item.call_id
+                        full_args = getattr(item, "arguments", "") or ""
+                        log.debug("TOOL item.done call_id=%s full_args=%r", cid, full_args)
+                        if cid in func_calls:
+                            func_calls[cid]["arguments"] = full_args
 
             thinking = "".join(thinking_chunks)
             text     = "".join(text_chunks)
