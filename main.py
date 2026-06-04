@@ -88,9 +88,11 @@ async def _run_cli(system_prompt: str):
             atts, pending_files = pending_files, []
             with console.status("[dim]思考中...[/dim]", spinner="dots"):
                 try:
-                    reply = await agent.chat(raw, attachments=atts)
+                    thinking, reply = await agent.chat(raw, attachments=atts)
                 except Exception as e:
                     console.print(f"[red]{e}[/red]"); continue
+            if thinking:
+                console.print(f"[dim italic]💭 {thinking[:200]}{'…' if len(thinking)>200 else ''}[/dim italic]")
 
             from rich.console import Console
             console.print()

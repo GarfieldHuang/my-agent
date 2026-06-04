@@ -98,7 +98,7 @@ class App(ctk.CTk):
     # ── Agent init ────────────────────────────────
 
     def _init_agent(self):
-        from agent.auth import has_valid_token, get_openai_client, get_model
+        from agent.auth import has_valid_token, get_openai_client, get_model, load_config
         if not has_valid_token():
             self._queue.put(("need_login", None))
             return
@@ -110,7 +110,11 @@ class App(ctk.CTk):
                 client = get_openai_client()
                 mcp    = MCPManager("mcp_config.yaml")
                 await mcp.start()
-                agent  = Agent(client=client, mcp=mcp, model=get_model())
+                cfg    = load_config()
+                agent  = Agent(
+                    client=client, mcp=mcp, model=get_model(),
+                    reasoning_effort=cfg.get("reasoning_effort", "medium"),
+                )
                 self._queue.put(("ready", (mcp, agent)))
             except Exception as e:
                 self._queue.put(("error", str(e)))
