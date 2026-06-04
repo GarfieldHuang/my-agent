@@ -85,7 +85,7 @@ class MCPManager:
 
     def _load_config(self) -> dict:
         try:
-            with open(self.config_path) as f:
+            with open(self.config_path, encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         except FileNotFoundError:
             return {}

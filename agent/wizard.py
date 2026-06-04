@@ -113,7 +113,7 @@ def _step_mcp() -> None:
     console.print("[dim]MCP 讓 agent 可以呼叫外部工具，例如讀寫檔案、查資料等。[/dim]\n")
 
     mcp_path = Path("mcp_config.yaml")
-    cfg = yaml.safe_load(mcp_path.read_text()) if mcp_path.exists() else {}
+    cfg = yaml.safe_load(mcp_path.read_text(encoding="utf-8")) if mcp_path.exists() else {}
     servers: dict = cfg.get("servers") or {}
 
     active = [k for k, v in servers.items() if v is not None]
@@ -142,5 +142,5 @@ def _step_mcp() -> None:
             break
 
     cfg["servers"] = servers
-    mcp_path.write_text(yaml.dump(cfg, allow_unicode=True, default_flow_style=False))
+    mcp_path.write_text(yaml.dump(cfg, allow_unicode=True, default_flow_style=False), encoding="utf-8")
     console.print("[green]✓ mcp_config.yaml 已更新[/green]\n")
