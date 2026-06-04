@@ -56,16 +56,14 @@ class Agent:
         """
         tools = self.mcp.openai_tools()
 
-        # Responses API 的 input：system + 對話歷史
-        input_items: list = [
-            {"role": "system", "content": self.system_prompt},
-            *self.history,
-        ]
+        # Codex 後端要求 instructions 用獨立參數，不能放在 input 陣列
+        input_items: list = list(self.history)
 
         for _ in range(MAX_TOOL_ROUNDS):
             response = await self.client.responses.create(
                 model=self.model,
                 input=input_items,
+                instructions=self.system_prompt,
                 tools=tools if tools else NOT_GIVEN,
                 store=False,   # Codex 後端必須 False
             )
