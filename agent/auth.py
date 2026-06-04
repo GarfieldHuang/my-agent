@@ -140,10 +140,10 @@ def _browser_oauth(client_id: str) -> dict:
 
     if opened:
         print("\n[Auth] 瀏覽器已開啟，請用你的 ChatGPT 帳號（Plus/Pro）登入並授權…")
-        print("[Auth] 授權完成後會自動繼續，請勿關閉此視窗。")
     else:
-        print("\n[Auth] 無法自動開啟瀏覽器，請手動複製以下網址到瀏覽器：")
-        print(f"\n  {auth_url}\n")
+        print("\n[Auth] 無法自動開啟瀏覽器，請手動複製以下網址：")
+    print(f"\n  {auth_url}\n")
+    print("[Auth] 授權完成後會自動繼續，請勿關閉此視窗。")
 
     # 等待 callback（15 秒後提示可手動貼 redirect URL，仿 openclaw 行為）
     for i in range(300):
