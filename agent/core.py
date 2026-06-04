@@ -6,9 +6,8 @@ from pathlib import Path
 
 from openai import AsyncOpenAI, NOT_GIVEN
 
-# ── Log 檔設定 ────────────────────────────────────
-_log_path = Path.home() / ".my-agent" / "agent.log"
-_log_path.parent.mkdir(parents=True, exist_ok=True)
+# ── Log 檔設定（寫在執行目錄底下）────────────────
+_log_path = Path("agent.log")
 
 logging.basicConfig(
     level=logging.DEBUG,
