@@ -14,6 +14,7 @@ from base64 import urlsafe_b64encode
 from pathlib import Path
 from urllib.parse import urlencode
 
+import certifi
 import httpx
 import keyring
 import uvicorn
@@ -88,7 +89,7 @@ def _try_refresh(token: dict, client_id: str) -> dict | None:
             "grant_type":    "refresh_token",
             "client_id":     client_id,
             "refresh_token": refresh,
-        }, timeout=10)
+        }, timeout=10, verify=certifi.where())
         if resp.status_code == 200:
             new_token = {**token, **resp.json()}
             _save_token(new_token)
@@ -171,7 +172,7 @@ def _browser_oauth(client_id: str) -> dict:
         "code":          bucket["code"],
         "redirect_uri":  REDIRECT_URI,
         "code_verifier": verifier,
-    }, timeout=10)
+    }, timeout=10, verify=certifi.where())
     resp.raise_for_status()
     return resp.json()
 
