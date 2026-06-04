@@ -92,11 +92,16 @@ class MCPManager:
     # ── Internal ──────────────────────────────────
 
     def _load_config(self) -> dict:
-        try:
-            with open(self.config_path, encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
-        except FileNotFoundError:
-            return {}
+        # mcp_config.yaml 在 .gitignore 裡（含個人 server 設定）
+        # 找不到時 fallback 到 example 檔（只有範例，servers 區段為空）
+        paths = [self.config_path, self.config_path.replace(".yaml", ".example.yaml")]
+        for path in paths:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    return yaml.safe_load(f) or {}
+            except FileNotFoundError:
+                continue
+        return {}
 
     async def _connect(self, name: str, spec: dict) -> ClientSession:
         transport = spec.get("transport", "stdio")
