@@ -42,6 +42,9 @@ TOKEN_URL    = "https://auth.openai.com/oauth/token"
 REDIRECT_URI = "http://localhost:1455/auth/callback"   # 必須跟 client_id 登記的一致
 SCOPE        = "openid profile email offline_access"
 
+# ChatGPT 訂閱後端（走 Plus/Pro 配額，不需要 API 帳戶餘額）
+CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
+
 KEYCHAIN_SERVICE = "my-agent"
 KEYCHAIN_KEY     = "openai-token"
 CONFIG_PATH  = Path.home() / ".my-agent" / "config.json"
@@ -230,11 +233,11 @@ def get_access_token() -> str:
 
 
 def get_openai_client():
-    """建立 OpenAI client，帶上 ChatGPT OAuth 所需的 headers。"""
+    """建立 OpenAI client，指向 ChatGPT 訂閱後端（不需要 API 帳戶餘額）。"""
     from openai import AsyncOpenAI
 
     access_token = get_access_token()
-    account_id = _extract_account_id(access_token)
+    account_id   = _extract_account_id(access_token)
 
     extra_headers = {"originator": "my-agent"}
     if account_id:
@@ -242,6 +245,7 @@ def get_openai_client():
 
     return AsyncOpenAI(
         api_key=access_token,
+        base_url=CODEX_BASE_URL,
         default_headers=extra_headers,
     )
 
@@ -281,7 +285,7 @@ def get_user_info() -> dict:
 
 def get_model() -> str:
     cfg = load_config()
-    return cfg.get("model") or os.getenv("OPENAI_MODEL", "gpt-4o")
+    return cfg.get("model") or os.getenv("OPENAI_MODEL", "gpt-5.4-codex")
 
 
 def load_config() -> dict:
