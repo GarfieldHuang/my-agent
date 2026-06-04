@@ -111,27 +111,43 @@ class ChatView(ctk.CTkFrame):
         row = ctk.CTkFrame(self.msg_frame, fg_color="transparent")
         row.pack(fill="x", padx=8, pady=3)
 
-        colors = {
+        bg_colors = {
             "user":      ("#1a56db", "#1a56db"),
             "assistant": ("gray82",  "gray22"),
             "error":     ("#c0392b", "#922b21"),
         }
-        text_colors = {
-            "user": ("white", "white"),
-            "assistant": ("gray10", "gray95"),
-            "error": ("white", "white"),
+        fg_colors = {
+            "user":      ("white",   "white"),
+            "assistant": ("gray10",  "gray95"),
+            "error":     ("white",   "white"),
         }
         anchor = "e" if role == "user" else "w"
+        bg = bg_colors.get(role, ("gray80", "gray20"))
+        fg = fg_colors.get(role, ("gray10", "gray90"))
 
-        bubble = ctk.CTkFrame(row, fg_color=colors.get(role, ("gray80", "gray20")),
-                              corner_radius=14)
+        bubble = ctk.CTkFrame(row, fg_color=bg, corner_radius=14)
         bubble.pack(anchor=anchor, padx=6)
 
-        ctk.CTkLabel(
-            bubble, text=text,
-            text_color=text_colors.get(role, ("gray10", "gray90")),
-            wraplength=480, justify="left", anchor="w",
-        ).pack(padx=14, pady=8)
+        # CTkTextbox：唯讀但可以選取、複製文字
+        # 高度依文字行數動態計算
+        lines  = text.count("\n") + max(1, len(text) // 55)
+        height = min(max(lines * 22, 36), 400)
+
+        tb = ctk.CTkTextbox(
+            bubble,
+            width=480, height=height,
+            wrap="word",
+            fg_color=bg,
+            text_color=fg,
+            border_width=0,
+            scrollbar_button_color=bg,   # 隱藏捲軸
+            scrollbar_button_hover_color=bg,
+            activate_scrollbars=False,
+            font=ctk.CTkFont(size=13),
+        )
+        tb.insert("1.0", text)
+        tb.configure(state="disabled")   # 唯讀：可選取但不可編輯
+        tb.pack(padx=10, pady=8)
 
         self._scroll_bottom()
 

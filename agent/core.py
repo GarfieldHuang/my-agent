@@ -59,7 +59,6 @@ class Agent:
 
             async for event in stream:
                 etype = getattr(event, "type", "")
-                print(f"[DEBUG] {etype!r}  {event!r}")
 
                 if etype == "response.output_text.delta":
                     text_chunks.append(getattr(event, "delta", ""))
@@ -81,7 +80,6 @@ class Agent:
 
             text    = "".join(text_chunks)
             fc_list = list(func_calls.values())
-            print(f"[DEBUG] text={text!r}  func_calls={[f['name'] for f in fc_list]}\n")
 
             if not fc_list:
                 return text
