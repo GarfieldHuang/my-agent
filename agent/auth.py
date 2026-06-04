@@ -106,16 +106,17 @@ def _browser_oauth(client_id: str) -> dict:
     state = secrets.token_urlsafe(16)
 
     auth_url = AUTH_URL + "?" + urlencode({
-        "response_type":            "code",
-        "client_id":                client_id,
-        "redirect_uri":             REDIRECT_URI,
-        "scope":                    SCOPE,
-        "state":                    state,
-        "code_challenge":           challenge,
-        "code_challenge_method":    "S256",
+        "response_type":              "code",
+        "client_id":                  client_id,
+        "redirect_uri":               REDIRECT_URI,
+        "scope":                      SCOPE,
+        "state":                      state,
+        "code_challenge":             challenge,
+        "code_challenge_method":      "S256",
         # OpenAI 專用參數（參考 openclaw 實作）
         "id_token_add_organizations": "true",
         "codex_cli_simplified_flow":  "true",
+        "originator":                 "my-agent",
     })
 
     bucket: dict = {}
@@ -134,15 +135,34 @@ def _browser_oauth(client_id: str) -> dict:
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
 
-    print("\n[Auth] 開啟瀏覽器，請用你的 ChatGPT 帳號（Plus/Pro）登入並授權…")
-    webbrowser.open(auth_url)
+    # 嘗試開啟瀏覽器；在遠端/VPS 環境可能失敗
+    opened = webbrowser.open(auth_url)
 
-    for _ in range(300):
+    if opened:
+        print("\n[Auth] 瀏覽器已開啟，請用你的 ChatGPT 帳號（Plus/Pro）登入並授權…")
+        print("[Auth] 授權完成後會自動繼續，請勿關閉此視窗。")
+    else:
+        print("\n[Auth] 無法自動開啟瀏覽器，請手動複製以下網址到瀏覽器：")
+        print(f"\n  {auth_url}\n")
+
+    # 等待 callback（15 秒後提示可手動貼 redirect URL，仿 openclaw 行為）
+    for i in range(300):
         if "code" in bucket:
             server.should_exit = True
             break
+        if i == 15 and not opened:
+            redirect_url = input(
+                "\n[Auth] 登入後請貼上瀏覽器跳轉的完整 redirect URL：\n> "
+            ).strip()
+            from urllib.parse import urlparse, parse_qs
+            parsed = parse_qs(urlparse(redirect_url).query)
+            if "code" in parsed:
+                bucket["code"] = parsed["code"][0]
+                server.should_exit = True
+                break
         time.sleep(1)
     else:
+        server.should_exit = True
         raise TimeoutError("OAuth 認證逾時（5 分鐘）")
 
     resp = httpx.post(TOKEN_URL, data={
