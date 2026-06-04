@@ -1,8 +1,24 @@
 """Agent 主迴圈：Responses API + 反思推理能力。"""
 import json
+import logging
 import os
+from pathlib import Path
 
 from openai import AsyncOpenAI, NOT_GIVEN
+
+# ── Log 檔設定 ────────────────────────────────────
+_log_path = Path.home() / ".my-agent" / "agent.log"
+_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(_log_path, encoding="utf-8"),
+        logging.StreamHandler(),          # 同時印到 console
+    ],
+)
+log = logging.getLogger("my-agent")
 
 from .files import FileUploader
 from .mcp_manager import MCPManager
@@ -118,11 +134,11 @@ class Agent:
                 try:
                     raw  = fc["arguments"].strip()
                     args = json.loads(raw) if raw else {}
-                    print(f"[TOOL] calling {fc['name']} args={args!r}")
+                    log.debug("TOOL calling %s args=%r", fc["name"], args)
                     result = await self.mcp.call(fc["name"], args)
-                    print(f"[TOOL] result={result!r}")
+                    log.debug("TOOL result=%r", result)
                 except Exception as e:
-                    print(f"[TOOL] error={type(e).__name__}: {e}")
+                    log.error("TOOL error %s: %s", type(e).__name__, e)
                     result = f"[ERROR] {e}"
 
                 input_items.append({
