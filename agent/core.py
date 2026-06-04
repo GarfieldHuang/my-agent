@@ -70,16 +70,28 @@ class Agent:
             ) as stream:
                 response = await stream.get_final_response()
 
+            # ── DEBUG：印出原始 response 結構 ──
+            print("\n[DEBUG] response.output:")
+            for i, item in enumerate(response.output):
+                print(f"  [{i}] type={getattr(item, 'type', '?')!r}  item={item!r}")
+            print()
+
             # 分類 output items
             text_blocks = []
             func_calls  = []
             for item in response.output:
-                if getattr(item, "type", None) == "message":
+                itype = getattr(item, "type", None)
+                if itype == "message":
                     for block in getattr(item, "content", []):
-                        if getattr(block, "type", None) == "output_text":
-                            text_blocks.append(block.text)
-                elif getattr(item, "type", None) == "function_call":
+                        btype = getattr(block, "type", None)
+                        btext = getattr(block, "text", None)
+                        print(f"  [DEBUG] message block type={btype!r} text={btext!r}")
+                        if btype == "output_text" and btext:
+                            text_blocks.append(btext)
+                elif itype == "function_call":
                     func_calls.append(item)
+
+            print(f"[DEBUG] text_blocks={text_blocks}  func_calls={len(func_calls)}\n")
 
             if not func_calls:
                 return "".join(text_blocks)
