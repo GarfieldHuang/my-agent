@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """My Agent — OpenAI OAuth + MCP + 檔案上傳"""
 import asyncio
+import sys
 from pathlib import Path
+
+# Windows 上 Python 預設用 ProactorEventLoop，與 uvicorn 的 OAuth callback server 不相容
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import click
 from dotenv import load_dotenv
