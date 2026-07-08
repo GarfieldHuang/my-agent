@@ -1,7 +1,10 @@
 """聊天介面：訊息泡泡、推理展開區塊、輸入欄、附加檔案。"""
+import logging
 from pathlib import Path
 
 import customtkinter as ctk
+
+log = logging.getLogger("my-agent")
 
 
 class ChatView(ctk.CTkFrame):
@@ -33,15 +36,16 @@ class ChatView(ctk.CTkFrame):
         self.input.bind("<Shift-Return>", lambda e: None)
 
         # ── IME 修正（Windows 中文輸入法）──────────
-        # 切輸入法（Shift / Ctrl+Space）時 IME 會丟棄組字中的內容。
-        # 在可能觸發切換的按鍵當下先記住組字字串，之後若發現被丟棄
-        # 就手動補回輸入框（見 _guard_composition）。
+        # 常駐輪詢（50ms）追蹤組字字串：組字消失但內容沒進輸入框
+        # （= 被輸入法切換丟棄）就手動補回。不依賴特定切換鍵，
+        # Shift / Ctrl+Space / Win+Space / 滑鼠點語言列都涵蓋。
+        # Esc / Backspace 是使用者主動取消組字，短時間內不救援。
         # 組字期間按 Enter 是選字，不觸發送出（見 _on_enter）。
-        for seq in ("<KeyPress-Shift_L>", "<KeyPress-Shift_R>",
-                    "<KeyPress-Control_L>", "<KeyPress-Control_R>",
-                    "<FocusOut>"):
-            self.input.bind(seq, lambda e: self._guard_composition(), add="+")
+        self._ime_state = {"comp": "", "base": "", "pending": None, "skip_until": 0.0}
+        for seq in ("<KeyPress-Escape>", "<KeyPress-BackSpace>"):
+            self.input.bind(seq, self._ime_mark_cancel, add="+")
         self.input.bind("<Control-space>", self._on_ctrl_space)
+        self.after(50, self._ime_poll)
 
         # Ctrl+V：剪貼簿是圖片就直接附加，不用先存檔
         self.input.bind("<Control-v>", self._on_paste)
@@ -62,43 +66,87 @@ class ChatView(ctk.CTkFrame):
     # ── 送出 ──────────────────────────────────────
 
     def _on_ctrl_space(self, event):
-        self._guard_composition()
-        return "break"   # 攔掉 Tk 預設的空白插入
-
-    def _guard_composition(self):
-        """組字內容防丟失。
-
-        記下目前的組字字串與輸入框內容，接著監看約 0.6 秒：
-        - 組字還在（或繼續打字）→ 不動作
-        - 組字消失、輸入框沒變 → 輸入法把字丟了，手動補回
-        - 組字消失、只多出一個（全形）空白 → Ctrl+Space 漏的空白，換成組字內容
-        - 組字消失、輸入框有正常新增文字 → 輸入法自己 commit 成功，不動作
-        """
+        """Ctrl+Space 切輸入法：組字救援交給 _ime_poll，這裡只處理
+        「沒在組字時」漏進來的一個（全形）空白，並攔掉 Tk 預設空白插入。"""
         from gui.ime import get_composition
-        comp = get_composition()
-        if not comp:
-            return
-        snapshot = self.input.get("1.0", "end-1c")
-        state = {"tries": 0}
+        if not get_composition():
+            snapshot = self.input.get("1.0", "end-1c")
+            state = {"tries": 0}
 
-        def _check():
-            cur = get_composition()
-            if cur:
-                if cur == comp and state["tries"] < 20:
-                    state["tries"] += 1
-                    self.after(30, _check)
-                return   # 組字內容變了 = 使用者還在打字，收工
-
-            now = self.input.get("1.0", "end-1c")
-            if now == snapshot:
-                self.input.insert("insert", comp)          # 被丟棄 → 補回
-            else:
+            def _watch():
+                now = self.input.get("1.0", "end-1c")
                 i = self._diff_single_space(snapshot, now)
-                if i is not None:                          # 只漏進一個空白
+                if i is not None:
                     self.input.delete(f"1.0+{i}c", f"1.0+{i + 1}c")
-                    self.input.insert("insert", comp)
+                    return
+                state["tries"] += 1
+                if state["tries"] < 10 and now == snapshot:
+                    self.after(20, _watch)
 
-        self.after(30, _check)
+            self.after(10, _watch)
+        return "break"
+
+    # ── IME 組字救援（常駐輪詢）───────────────────
+
+    def _ime_mark_cancel(self, event=None):
+        import time
+        self._ime_state["skip_until"] = time.time() + 0.4
+
+    def _ime_poll(self):
+        try:
+            self._ime_tick()
+        except Exception:
+            pass
+        finally:
+            self.after(50, self._ime_poll)
+
+    def _ime_tick(self):
+        import time
+        from gui.ime import get_composition
+        st = self._ime_state
+
+        # 焦點不在聊天輸入框（例如設定頁的欄位）就重置，避免誤插
+        focused = self.focus_get()
+        if not focused or not str(focused).startswith(str(self.input)):
+            st.update(comp="", pending=None)
+            return
+
+        comp = get_composition()
+        text = self.input.get("1.0", "end-1c")
+
+        if comp:
+            # 組字進行中：持續更新最新組字字串與基準文字
+            st.update(comp=comp, base=text, pending=None)
+            return
+
+        if st["comp"]:
+            # 組字剛消失：掛起一輪再判斷，讓正常 commit 的文字有時間進來
+            st["pending"] = {"comp": st["comp"], "base": st["base"]}
+            st["comp"] = ""
+            return
+
+        p = st["pending"]
+        if not p:
+            return
+        st["pending"] = None
+
+        if time.time() < st["skip_until"]:
+            log.debug("IME rescue skipped (user cancelled) comp=%r", p["comp"])
+            return
+        if text == p["base"]:
+            # 組字被輸入法丟棄、什麼都沒進來 → 補回
+            log.debug("IME rescue insert comp=%r", p["comp"])
+            self.input.insert("insert", p["comp"])
+        else:
+            i = self._diff_single_space(p["base"], text)
+            if i is not None:
+                # 只漏進一個（全形）空白 → 換成組字內容
+                log.debug("IME rescue replace-space comp=%r", p["comp"])
+                self.input.delete(f"1.0+{i}c", f"1.0+{i + 1}c")
+                self.input.insert("insert", p["comp"])
+            else:
+                log.debug("IME committed normally, text grew by %d chars",
+                          len(text) - len(p["base"]))
 
     @staticmethod
     def _diff_single_space(prev: str, now: str) -> int | None:
