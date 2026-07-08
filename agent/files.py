@@ -24,8 +24,8 @@ class FileUploader:
         """
         上傳檔案，回傳可放入 messages content 的字典。
 
-        圖片 → {"type": "image_url", "image_url": {"url": "..."}}
-        文件 → {"type": "text", "text": "<file content>"}  (小檔)
+        圖片 → {"type": "input_image", "image_url": "data:..."}
+        文件 → {"type": "input_text", "text": "<file content>"}  (小檔)
              或 file_id 引用（大檔）
         """
         p = Path(path).expanduser().resolve()
@@ -42,7 +42,7 @@ class FileUploader:
             # 嘗試當文字讀
             try:
                 text = p.read_text(errors="replace")
-                return {"type": "text", "text": f"[{p.name}]\n{text}"}
+                return {"type": "input_text", "text": f"[{p.name}]\n{text}"}
             except Exception:
                 raise ValueError(f"不支援的檔案類型：{ext}")
 
@@ -52,8 +52,8 @@ class FileUploader:
         mime = mimetypes.guess_type(str(p))[0] or "image/jpeg"
         b64 = base64.b64encode(p.read_bytes()).decode()
         return {
-            "type": "image_url",
-            "image_url": {"url": f"data:{mime};base64,{b64}"},
+            "type": "input_image",
+            "image_url": f"data:{mime};base64,{b64}",
         }
 
     async def _upload_document(self, p: Path) -> dict:
@@ -62,7 +62,7 @@ class FileUploader:
 
         if size < 512 * 1024:
             text = p.read_text(errors="replace")
-            return {"type": "text", "text": f"[{p.name}]\n```\n{text}\n```"}
+            return {"type": "input_text", "text": f"[{p.name}]\n```\n{text}\n```"}
 
         # 大檔：上傳到 Files API
         if str(p) in self._cache:
@@ -75,7 +75,7 @@ class FileUploader:
             print(f"[Files] 已上傳 {p.name} → {file_id}")
 
         return {
-            "type": "text",
+            "type": "input_text",
             "text": f"[已上傳檔案 {p.name}，file_id: {file_id}]",
         }
 

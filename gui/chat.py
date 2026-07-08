@@ -33,12 +33,16 @@ class ChatView(ctk.CTkFrame):
         self.input.bind("<Shift-Return>", lambda e: None)
 
         # ── IME 修正（Windows 中文輸入法）──────────
-        # 1. 按 Shift/Ctrl+Space 切換輸入法前，先把組字中的內容 commit 進輸入框
-        # 2. 組字期間按 Enter 是選字，不觸發送出
+        # 1. Shift/Ctrl 按下瞬間先 commit 組字（要趕在輸入法切換丟棄它之前）
+        # 2. Ctrl+Space 切換輸入法時，攔掉 Tk 預設的空白插入
+        # 3. 組字期間按 Enter 是選字，不觸發送出（見 _on_enter）
         from gui.ime import commit_composition
         for seq in ("<KeyPress-Shift_L>", "<KeyPress-Shift_R>",
-                    "<Control-space>", "<FocusOut>"):
+                    "<KeyPress-Control_L>", "<KeyPress-Control_R>",
+                    "<FocusOut>"):
             self.input.bind(seq, lambda e: commit_composition(), add="+")
+        self.input.bind("<Control-space>",
+                        lambda e: (commit_composition(), "break")[1])
 
         # Ctrl+V：剪貼簿是圖片就直接附加，不用先存檔
         self.input.bind("<Control-v>", self._on_paste)
