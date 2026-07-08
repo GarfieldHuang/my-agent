@@ -34,15 +34,14 @@ class ChatView(ctk.CTkFrame):
 
         # ── IME 修正（Windows 中文輸入法）──────────
         # 1. Shift/Ctrl 按下瞬間先 commit 組字（要趕在輸入法切換丟棄它之前）
-        # 2. Ctrl+Space 切換輸入法時，攔掉 Tk 預設的空白插入
+        # 2. Ctrl+Space 切換後 IME 會漏一個（全形）空白進來，事後偵測移除
         # 3. 組字期間按 Enter 是選字，不觸發送出（見 _on_enter）
         from gui.ime import commit_composition
         for seq in ("<KeyPress-Shift_L>", "<KeyPress-Shift_R>",
                     "<KeyPress-Control_L>", "<KeyPress-Control_R>",
                     "<FocusOut>"):
             self.input.bind(seq, lambda e: commit_composition(), add="+")
-        self.input.bind("<Control-space>",
-                        lambda e: (commit_composition(), "break")[1])
+        self.input.bind("<Control-space>", self._on_ctrl_space)
 
         # Ctrl+V：剪貼簿是圖片就直接附加，不用先存檔
         self.input.bind("<Control-v>", self._on_paste)
@@ -61,6 +60,36 @@ class ChatView(ctk.CTkFrame):
         self._add_system("登入後即可開始對話。Enter 送出，Shift+Enter 換行。")
 
     # ── 送出 ──────────────────────────────────────
+
+    def _on_ctrl_space(self, event):
+        """Ctrl+Space 切輸入法：先 commit 組字，再清掉 IME 漏進來的（全形）空白。
+
+        那個空白不是走按鍵事件（return "break" 攔不到），是 IME 在切換瞬間
+        當成組字結果塞進來的，所以只能事後監看移除。組字 commit 進來的
+        正常文字（多於一個字元、或非空白）會被保留。
+        """
+        from gui.ime import commit_composition
+        commit_composition()
+
+        state = {"prev": self.input.get("1.0", "end-1c"), "tries": 0}
+
+        def _watch():
+            now = self.input.get("1.0", "end-1c")
+            prev = state["prev"]
+            if now != prev:
+                if len(now) == len(prev) + 1:
+                    i = next((k for k in range(len(prev)) if prev[k] != now[k]),
+                             len(prev))
+                    if now[i] in (" ", "　"):
+                        self.input.delete(f"1.0+{i}c", f"1.0+{i + 1}c")
+                        return          # 清掉漏進來的空白，收工
+                state["prev"] = now     # 是 commit 進來的組字內容，更新基準續看
+            state["tries"] += 1
+            if state["tries"] < 10:
+                self.after(20, _watch)
+
+        self.after(10, _watch)
+        return "break"
 
     def _on_enter(self, event):
         from gui.ime import has_composition
