@@ -55,7 +55,7 @@ async def _run_cli(system_prompt: str):
 
     console.print(Panel(
         f"[bold]My Agent[/bold]（{model}）\n"
-        "/file <路徑>  附加檔案    /clear  清除對話    /logout  登出    /quit  離開",
+        "/file <路徑>  附加檔案    /image <描述>  生圖    /clear  清除對話    /logout  登出    /quit  離開",
         border_style="blue",
     ))
 
@@ -83,6 +83,22 @@ async def _run_cli(system_prompt: str):
                     console.print(f"[dim]✓ 已附加：{p}[/dim]")
                 else:
                     console.print(f"[red]找不到：{p}[/red]")
+                continue
+
+            if raw.startswith("/image "):
+                from agent.imagegen import generate_image
+                img_prompt = raw[7:].strip()
+                refs, pending_files = pending_files, []   # 已附加的圖片當參考圖（圖生圖）
+                with console.status("[dim]生圖中（可能需要 1-2 分鐘）...[/dim]", spinner="dots"):
+                    try:
+                        out = await generate_image(
+                            img_prompt,
+                            output_path=Path("generated_images") / "image.png",
+                            input_images=refs or None,
+                        )
+                    except Exception as e:
+                        console.print(f"[red]{e}[/red]"); continue
+                console.print(f"[green]✓ 已存檔：{out}[/green]")
                 continue
 
             atts, pending_files = pending_files, []
@@ -130,6 +146,29 @@ def logout():
     """登出（清除本機 token）"""
     from agent.auth import logout as _lo
     _lo()
+
+
+@main.command()
+@click.argument("prompt")
+@click.option("-o", "--output", default="image.png", help="輸出檔名（存在時自動加 -v2）")
+@click.option("-i", "--input", "inputs", multiple=True, help="參考圖（可多個，圖生圖/編輯用）")
+@click.option("--size", default="auto", type=click.Choice(["auto", "1024x1024", "1536x1024", "1024x1536"]))
+@click.option("--quality", default="auto", type=click.Choice(["auto", "low", "medium", "high"]))
+def image(prompt, output, inputs, size, quality):
+    """用 gpt-image-2 生圖（走 ChatGPT 訂閱配額）"""
+    from rich.console import Console
+    from agent.imagegen import generate_image
+
+    console = Console()
+    with console.status("[dim]生圖中（可能需要 1-2 分鐘）...[/dim]", spinner="dots"):
+        out = asyncio.run(generate_image(
+            prompt,
+            output_path=output,
+            input_images=list(inputs) or None,
+            size=size,
+            quality=quality,
+        ))
+    console.print(f"[green]✓ 已存檔：{out}[/green]")
 
 
 if __name__ == "__main__":

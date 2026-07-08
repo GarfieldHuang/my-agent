@@ -20,6 +20,7 @@ logging.basicConfig(
 log = logging.getLogger("my-agent")
 
 from .files import FileUploader
+from .imagegen import disable_model_param, image_tool, save_image_b64
 from .mcp_manager import MCPManager
 
 MAX_TOOL_ROUNDS = 10
@@ -41,6 +42,7 @@ class Agent:
         self.reasoning_effort = reasoning_effort
         self.files            = FileUploader(client)
         self.history: list[dict] = []
+        self.last_images: list[Path] = []   # 本輪 chat 產生的圖片路徑（GUI 顯示用）
 
     # ── Public API ────────────────────────────────
 
@@ -57,7 +59,11 @@ class Agent:
         content = await self._build_content(user_input, attachments or [])
         self.history.append({"role": "user", "content": content})
 
+        self.last_images = []
         thinking, reply = await self._run_loop()
+        if self.last_images:
+            paths = "\n".join(f"🖼️ {p}" for p in self.last_images)
+            reply = (f"{reply}\n\n" if reply.strip() else "") + f"圖片已存檔：\n{paths}"
         self.history.append({"role": "assistant", "content": reply})
         return thinking, reply
 
@@ -67,7 +73,8 @@ class Agent:
     # ── Core loop ─────────────────────────────────
 
     async def _run_loop(self) -> tuple[str, str]:
-        tools = self.mcp.openai_tools()
+        # MCP 工具 + hosted 生圖工具（gpt-image-2，走訂閱配額）
+        tools = list(self.mcp.openai_tools() or []) + [image_tool()]
         input_items: list = list(self.history)
 
         # reasoning 參數：effort 為 "none" 時不送推理
@@ -85,15 +92,32 @@ class Agent:
             text_chunks:     list[str] = []
             func_calls: dict[str, dict] = {}
 
-            stream = await self.client.responses.create(
-                model=self.model,
-                input=input_items,
-                instructions=self.system_prompt,
-                tools=tools if tools else NOT_GIVEN,
-                store=False,
-                stream=True,
-                reasoning=reasoning_param,
-            )
+            try:
+                stream = await self.client.responses.create(
+                    model=self.model,
+                    input=input_items,
+                    instructions=self.system_prompt,
+                    tools=tools,
+                    store=False,
+                    stream=True,
+                    reasoning=reasoning_param,
+                )
+            except Exception as e:
+                # 後端可能不吃 image_generation 工具的 model 參數 → 拿掉重試一次
+                if "model" in str(e).lower() or "unknown" in str(e).lower():
+                    disable_model_param()
+                    tools = list(self.mcp.openai_tools() or []) + [image_tool()]
+                    stream = await self.client.responses.create(
+                        model=self.model,
+                        input=input_items,
+                        instructions=self.system_prompt,
+                        tools=tools,
+                        store=False,
+                        stream=True,
+                        reasoning=reasoning_param,
+                    )
+                else:
+                    raise
 
             async for event in stream:
                 etype = getattr(event, "type", "")
@@ -136,6 +160,13 @@ class Agent:
                         log.debug("TOOL item.done call_id=%s full_args=%r", cid, full_args)
                         if cid in func_calls:
                             func_calls[cid]["arguments"] = full_args
+                    # ── 生圖完成：base64 PNG 存檔 ──────────
+                    elif item and getattr(item, "type", "") == "image_generation_call":
+                        b64 = getattr(item, "result", None)
+                        if b64:
+                            path = save_image_b64(b64)
+                            self.last_images.append(path)
+                            log.info("IMAGE saved %s", path)
 
             thinking = "".join(thinking_chunks)
             text     = "".join(text_chunks)
