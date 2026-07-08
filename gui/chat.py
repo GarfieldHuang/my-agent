@@ -33,14 +33,14 @@ class ChatView(ctk.CTkFrame):
         self.input.bind("<Shift-Return>", lambda e: None)
 
         # ── IME 修正（Windows 中文輸入法）──────────
-        # 1. Shift/Ctrl 按下瞬間先 commit 組字（要趕在輸入法切換丟棄它之前）
-        # 2. Ctrl+Space 切換後 IME 會漏一個（全形）空白進來，事後偵測移除
-        # 3. 組字期間按 Enter 是選字，不觸發送出（見 _on_enter）
-        from gui.ime import commit_composition
+        # 切輸入法（Shift / Ctrl+Space）時 IME 會丟棄組字中的內容。
+        # 在可能觸發切換的按鍵當下先記住組字字串，之後若發現被丟棄
+        # 就手動補回輸入框（見 _guard_composition）。
+        # 組字期間按 Enter 是選字，不觸發送出（見 _on_enter）。
         for seq in ("<KeyPress-Shift_L>", "<KeyPress-Shift_R>",
                     "<KeyPress-Control_L>", "<KeyPress-Control_R>",
                     "<FocusOut>"):
-            self.input.bind(seq, lambda e: commit_composition(), add="+")
+            self.input.bind(seq, lambda e: self._guard_composition(), add="+")
         self.input.bind("<Control-space>", self._on_ctrl_space)
 
         # Ctrl+V：剪貼簿是圖片就直接附加，不用先存檔
@@ -62,34 +62,53 @@ class ChatView(ctk.CTkFrame):
     # ── 送出 ──────────────────────────────────────
 
     def _on_ctrl_space(self, event):
-        """Ctrl+Space 切輸入法：先 commit 組字，再清掉 IME 漏進來的（全形）空白。
+        self._guard_composition()
+        return "break"   # 攔掉 Tk 預設的空白插入
 
-        那個空白不是走按鍵事件（return "break" 攔不到），是 IME 在切換瞬間
-        當成組字結果塞進來的，所以只能事後監看移除。組字 commit 進來的
-        正常文字（多於一個字元、或非空白）會被保留。
+    def _guard_composition(self):
+        """組字內容防丟失。
+
+        記下目前的組字字串與輸入框內容，接著監看約 0.6 秒：
+        - 組字還在（或繼續打字）→ 不動作
+        - 組字消失、輸入框沒變 → 輸入法把字丟了，手動補回
+        - 組字消失、只多出一個（全形）空白 → Ctrl+Space 漏的空白，換成組字內容
+        - 組字消失、輸入框有正常新增文字 → 輸入法自己 commit 成功，不動作
         """
-        from gui.ime import commit_composition
-        commit_composition()
+        from gui.ime import get_composition
+        comp = get_composition()
+        if not comp:
+            return
+        snapshot = self.input.get("1.0", "end-1c")
+        state = {"tries": 0}
 
-        state = {"prev": self.input.get("1.0", "end-1c"), "tries": 0}
+        def _check():
+            cur = get_composition()
+            if cur:
+                if cur == comp and state["tries"] < 20:
+                    state["tries"] += 1
+                    self.after(30, _check)
+                return   # 組字內容變了 = 使用者還在打字，收工
 
-        def _watch():
             now = self.input.get("1.0", "end-1c")
-            prev = state["prev"]
-            if now != prev:
-                if len(now) == len(prev) + 1:
-                    i = next((k for k in range(len(prev)) if prev[k] != now[k]),
-                             len(prev))
-                    if now[i] in (" ", "　"):
-                        self.input.delete(f"1.0+{i}c", f"1.0+{i + 1}c")
-                        return          # 清掉漏進來的空白，收工
-                state["prev"] = now     # 是 commit 進來的組字內容，更新基準續看
-            state["tries"] += 1
-            if state["tries"] < 10:
-                self.after(20, _watch)
+            if now == snapshot:
+                self.input.insert("insert", comp)          # 被丟棄 → 補回
+            else:
+                i = self._diff_single_space(snapshot, now)
+                if i is not None:                          # 只漏進一個空白
+                    self.input.delete(f"1.0+{i}c", f"1.0+{i + 1}c")
+                    self.input.insert("insert", comp)
 
-        self.after(10, _watch)
-        return "break"
+        self.after(30, _check)
+
+    @staticmethod
+    def _diff_single_space(prev: str, now: str) -> int | None:
+        """now 若只比 prev 多出一個（全形）空白，回傳其位置，否則 None。"""
+        if len(now) != len(prev) + 1:
+            return None
+        i = next((k for k in range(len(prev)) if prev[k] != now[k]), len(prev))
+        if now[i] in (" ", "　") and prev == now[:i] + now[i + 1:]:
+            return i
+        return None
 
     def _on_enter(self, event):
         from gui.ime import has_composition
