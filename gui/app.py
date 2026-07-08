@@ -25,6 +25,7 @@ class App(ctk.CTk):
         self.mcp   = None
         self.agent = None
         self.is_ready = False
+        self.current_session_id: str | None = None
 
         self._build()
         self._init_agent()
@@ -38,10 +39,11 @@ class App(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # Sidebar
-        sidebar = ctk.CTkFrame(self, width=180, corner_radius=0)
+        sidebar = ctk.CTkFrame(self, width=200, corner_radius=0)
         sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.grid_propagate(False)
-        sidebar.grid_rowconfigure(10, weight=1)
+        sidebar.grid_columnconfigure(0, weight=1)
+        sidebar.grid_rowconfigure(7, weight=1)   # 對話紀錄區吃掉剩餘空間
 
         ctk.CTkLabel(
             sidebar, text="🤖 My Agent",
@@ -66,6 +68,23 @@ class App(ctk.CTk):
             btn.grid(row=i, column=0, padx=10, pady=3, sticky="ew")
             self._nav_btns[key] = btn
 
+        # ── 對話紀錄（Claude 風格：新對話 + 歷史列表）──
+        ctk.CTkButton(
+            sidebar, text="＋  新對話", anchor="w",
+            fg_color="transparent", text_color=("gray10", "gray90"),
+            hover_color=("gray70", "gray30"), height=34, corner_radius=8,
+            command=self.new_chat,
+        ).grid(row=5, column=0, padx=10, pady=(16, 2), sticky="ew")
+
+        ctk.CTkLabel(
+            sidebar, text="對話紀錄", anchor="w",
+            font=ctk.CTkFont(size=11), text_color="gray",
+        ).grid(row=6, column=0, padx=20, pady=(6, 0), sticky="ew")
+
+        self._session_frame = ctk.CTkScrollableFrame(sidebar, fg_color="transparent")
+        self._session_frame.grid(row=7, column=0, padx=4, pady=(2, 8), sticky="nsew")
+        self._session_frame.grid_columnconfigure(0, weight=1)
+
         # Content
         content = ctk.CTkFrame(self, corner_radius=0, fg_color=("gray96", "gray11"))
         content.grid(row=0, column=1, sticky="nsew")
@@ -87,6 +106,7 @@ class App(ctk.CTk):
             v.grid(row=0, column=0, sticky="nsew")
 
         self.show("chat")
+        self.refresh_sessions()
 
     def show(self, key: str):
         for k, btn in self._nav_btns.items():
@@ -94,6 +114,77 @@ class App(ctk.CTk):
         self._views[key].tkraise()
         if hasattr(self._views[key], "on_show"):
             self._views[key].on_show()
+
+    # ── 對話 session 管理 ─────────────────────────
+
+    def new_chat(self):
+        if self.agent:
+            self.agent.clear_history()
+        self.current_session_id = None
+        self._views["chat"].reset()
+        self.refresh_sessions()
+        self.show("chat")
+
+    def load_chat(self, session_id: str):
+        if not self.is_ready:
+            return
+        from agent import sessions
+        data = sessions.load_session(session_id)
+        if not data:
+            self.refresh_sessions()
+            return
+        self.agent.clear_history()
+        self.agent.history.extend(data.get("history", []))
+        self.current_session_id = session_id
+        self._views["chat"].render_history(self.agent.history)
+        self.refresh_sessions()
+        self.show("chat")
+
+    def save_current_chat(self):
+        """每輪對話後自動存檔（ChatView 呼叫）。"""
+        from agent import sessions
+        if not self.agent or not self.agent.history:
+            return
+        if not self.current_session_id:
+            self.current_session_id = sessions.new_session_id()
+        sessions.save_session(self.current_session_id, self.agent.history)
+        self.refresh_sessions()
+
+    def delete_chat(self, session_id: str):
+        from agent import sessions
+        sessions.delete_session(session_id)
+        if session_id == self.current_session_id:
+            self.new_chat()
+        else:
+            self.refresh_sessions()
+
+    def refresh_sessions(self):
+        from agent import sessions
+        for w in self._session_frame.winfo_children():
+            w.destroy()
+        for meta in sessions.list_sessions():
+            sid   = meta["id"]
+            title = meta["title"]
+            row = ctk.CTkFrame(self._session_frame, fg_color="transparent")
+            row.grid(sticky="ew", pady=1)
+            row.grid_columnconfigure(0, weight=1)
+
+            active = sid == self.current_session_id
+            ctk.CTkButton(
+                row, text=title[:18] + ("…" if len(title) > 18 else ""),
+                anchor="w", height=30, corner_radius=6,
+                font=ctk.CTkFont(size=12),
+                fg_color=("gray75", "gray25") if active else "transparent",
+                text_color=("gray10", "gray90"),
+                hover_color=("gray70", "gray30"),
+                command=lambda s=sid: self.load_chat(s),
+            ).grid(row=0, column=0, sticky="ew")
+            ctk.CTkButton(
+                row, text="✕", width=26, height=30, corner_radius=6,
+                fg_color="transparent", text_color="gray",
+                hover_color=("gray70", "gray30"),
+                command=lambda s=sid: self.delete_chat(s),
+            ).grid(row=0, column=1, padx=(2, 0))
 
     # ── Agent init ────────────────────────────────
 

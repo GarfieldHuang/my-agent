@@ -32,6 +32,17 @@ class ChatView(ctk.CTkFrame):
         self.input.bind("<Return>",       lambda e: self._on_enter(e))
         self.input.bind("<Shift-Return>", lambda e: None)
 
+        # ── IME 修正（Windows 中文輸入法）──────────
+        # 1. 按 Shift/Ctrl+Space 切換輸入法前，先把組字中的內容 commit 進輸入框
+        # 2. 組字期間按 Enter 是選字，不觸發送出
+        from gui.ime import commit_composition
+        for seq in ("<KeyPress-Shift_L>", "<KeyPress-Shift_R>",
+                    "<Control-space>", "<FocusOut>"):
+            self.input.bind(seq, lambda e: commit_composition(), add="+")
+
+        # Ctrl+V：剪貼簿是圖片就直接附加，不用先存檔
+        self.input.bind("<Control-v>", self._on_paste)
+
         ctk.CTkButton(
             input_frame, text="📎", width=40,
             fg_color="transparent", hover_color=("gray70", "gray30"),
@@ -48,6 +59,9 @@ class ChatView(ctk.CTkFrame):
     # ── 送出 ──────────────────────────────────────
 
     def _on_enter(self, event):
+        from gui.ime import has_composition
+        if has_composition():
+            return "break"   # IME 組字中，這個 Enter 是選字不是送出
         self._send()
         return "break"
 
@@ -79,12 +93,48 @@ class ChatView(ctk.CTkFrame):
                 if thinking:
                     self._add_reasoning(thinking)
                 self._add_bubble(reply, "assistant")
+                for img in getattr(self.app.agent, "last_images", []):
+                    self._add_image(img)
+                self.app.save_current_chat()
             except Exception as e:
                 self._add_bubble(f"錯誤：{e}", "error")
         else:
             self.after(100, lambda: self._poll(future, spinner))
 
     # ── 附加檔案 ──────────────────────────────────
+
+    def _on_paste(self, event):
+        """剪貼簿有圖片（截圖/複製的圖）→ 存成暫存 PNG 附加；否則走一般文字貼上。"""
+        try:
+            from PIL import ImageGrab
+            data = ImageGrab.grabclipboard()
+        except Exception:
+            return None   # 交給預設貼上
+
+        if data is None:
+            return None   # 剪貼簿是文字，交給預設貼上
+
+        import tempfile
+        import time as _time
+        paths: list[str] = []
+
+        if isinstance(data, list):
+            # 複製的是檔案（例如從檔案總管複製圖片檔）
+            paths = [p for p in data
+                     if Path(p).suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp"}]
+        else:
+            # 複製的是點陣圖（截圖等）→ 存暫存 PNG
+            tmp = Path(tempfile.gettempdir()) / f"my-agent-paste-{_time.strftime('%H%M%S')}.png"
+            data.save(tmp, "PNG")
+            paths = [str(tmp)]
+
+        if not paths:
+            return None
+
+        self._pending_files.extend(paths)
+        names = ", ".join(Path(p).name for p in self._pending_files)
+        self.attach_bar.configure(text=f"📎 {names}")
+        return "break"   # 圖片已處理，不要再貼文字
 
     def _attach_file(self):
         from tkinter import filedialog
@@ -173,6 +223,27 @@ class ChatView(ctk.CTkFrame):
         toggle_btn.configure(command=toggle)
         self._scroll_bottom()
 
+    def _add_image(self, path):
+        """把生成的圖片顯示在對話中，點擊用系統檢視器開啟。"""
+        try:
+            from PIL import Image
+            img = Image.open(path)
+            w, h = img.size
+            disp_w = min(w, 360)
+            disp_h = max(1, round(h * disp_w / w))
+            cimg = ctk.CTkImage(light_image=img, dark_image=img, size=(disp_w, disp_h))
+
+            row = ctk.CTkFrame(self.msg_frame, fg_color="transparent")
+            row.pack(fill="x", padx=8, pady=3)
+            label = ctk.CTkLabel(row, image=cimg, text="", cursor="hand2")
+            label.pack(anchor="w", padx=6)
+
+            import webbrowser
+            label.bind("<Button-1>", lambda e: webbrowser.open(Path(path).as_uri()))
+            self._scroll_bottom()
+        except Exception:
+            pass  # 圖片顯示失敗不影響對話（路徑已在回覆文字裡）
+
     def _add_spinner(self) -> ctk.CTkFrame:
         row = ctk.CTkFrame(self.msg_frame, fg_color="transparent")
         row.pack(fill="x", padx=8, pady=3)
@@ -194,6 +265,48 @@ class ChatView(ctk.CTkFrame):
             self.msg_frame._parent_canvas.yview_moveto(1.0)
         except Exception:
             pass
+
+    # ── Session 載入/重置 ─────────────────────────
+
+    def reset(self):
+        """清空訊息區（開新對話）。"""
+        for w in self.msg_frame.winfo_children():
+            w.destroy()
+        self._pending_files = []
+        self.attach_bar.configure(text="")
+        self._add_system("新對話開始。")
+
+    def render_history(self, history: list[dict]):
+        """把載入的 session 歷史重建成訊息泡泡。"""
+        for w in self.msg_frame.winfo_children():
+            w.destroy()
+        for msg in history:
+            role = msg.get("role", "")
+            text = self._content_text(msg.get("content", ""))
+            if not text:
+                continue
+            self._add_bubble(text, "user" if role == "user" else "assistant")
+            if role == "assistant":
+                # 回覆裡的 🖼️ 路徑若檔案還在，重新顯示圖片
+                for line in text.splitlines():
+                    if line.strip().startswith("🖼️"):
+                        p = Path(line.strip().lstrip("🖼️").strip())
+                        if p.exists():
+                            self._add_image(p)
+
+    @staticmethod
+    def _content_text(content) -> str:
+        if isinstance(content, str):
+            return content
+        parts = []
+        for p in content:
+            if not isinstance(p, dict):
+                continue
+            if p.get("type") in ("input_text", "text"):
+                parts.append(p.get("text", ""))
+            elif p.get("type") in ("image_url", "input_image"):
+                parts.append("📎 [圖片附件]")
+        return "\n".join(parts)
 
     # ── App callbacks ─────────────────────────────
 
