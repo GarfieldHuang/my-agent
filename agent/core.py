@@ -19,6 +19,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("my-agent")
 
+from .doctools import DOC_TOOLS, call_doc_tool, is_doc_tool
 from .files import FileUploader
 from .imagegen import disable_model_param, image_tool, save_image_b64
 from .mcp_manager import MCPManager
@@ -43,6 +44,7 @@ class Agent:
         self.files            = FileUploader(client)
         self.history: list[dict] = []
         self.last_images: list[Path] = []   # 本輪 chat 產生的圖片路徑（GUI 顯示用）
+        self.last_files:  list[Path] = []   # 本輪 chat 產生的文件路徑（GUI 顯示用）
 
     # ── Public API ────────────────────────────────
 
@@ -60,10 +62,14 @@ class Agent:
         self.history.append({"role": "user", "content": content})
 
         self.last_images = []
+        self.last_files  = []
         thinking, reply = await self._run_loop()
         if self.last_images:
             paths = "\n".join(f"🖼️ {p}" for p in self.last_images)
             reply = (f"{reply}\n\n" if reply.strip() else "") + f"圖片已存檔：\n{paths}"
+        if self.last_files:
+            paths = "\n".join(f"📄 {p}" for p in self.last_files)
+            reply = (f"{reply}\n\n" if reply.strip() else "") + f"檔案已產生：\n{paths}"
         self.history.append({"role": "assistant", "content": reply})
         return thinking, reply
 
@@ -72,9 +78,12 @@ class Agent:
 
     # ── Core loop ─────────────────────────────────
 
+    def _build_tools(self) -> list:
+        """MCP 工具 + hosted 生圖工具 + 本地文件工具。"""
+        return list(self.mcp.openai_tools() or []) + [image_tool()] + DOC_TOOLS
+
     async def _run_loop(self) -> tuple[str, str]:
-        # MCP 工具 + hosted 生圖工具（gpt-image-2，走訂閱配額）
-        tools = list(self.mcp.openai_tools() or []) + [image_tool()]
+        tools = self._build_tools()
         input_items: list = list(self.history)
 
         # reasoning 參數：effort 為 "none" 時不送推理
@@ -106,7 +115,7 @@ class Agent:
                 # 後端可能不吃 image_generation 工具的 model 參數 → 拿掉重試一次
                 if "model" in str(e).lower() or "unknown" in str(e).lower():
                     disable_model_param()
-                    tools = list(self.mcp.openai_tools() or []) + [image_tool()]
+                    tools = self._build_tools()
                     stream = await self.client.responses.create(
                         model=self.model,
                         input=input_items,
@@ -182,7 +191,12 @@ class Agent:
                     raw  = fc["arguments"].strip()
                     args = json.loads(raw) if raw else {}
                     log.debug("TOOL calling %s args=%r", fc["name"], args)
-                    result = await self.mcp.call(fc["name"], args)
+                    if is_doc_tool(fc["name"]):
+                        result, fpath = call_doc_tool(fc["name"], args)
+                        if fpath:
+                            self.last_files.append(fpath)
+                    else:
+                        result = await self.mcp.call(fc["name"], args)
                     log.debug("TOOL result=%r", result)
                     if not result.startswith("Error:") and not result.startswith("[ERROR]"):
                         all_errors = False

@@ -13,3 +13,6 @@ keyring>=25.0.0
 certifi>=2024.0.0
 truststore>=0.9.0
 customtkinter>=5.2.2
+python-docx>=1.1.0
+python-pptx>=0.6.23
+reportlab>=4.0.0

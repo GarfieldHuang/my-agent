@@ -147,6 +147,8 @@ class ChatView(ctk.CTkFrame):
                 self._add_bubble(reply, "assistant")
                 for img in getattr(self.app.agent, "last_images", []):
                     self._add_image(img)
+                for f in getattr(self.app.agent, "last_files", []):
+                    self._add_file_link(f)
                 self.app.save_current_chat()
             except Exception as e:
                 self._add_bubble(f"錯誤：{e}", "error")
@@ -296,6 +298,29 @@ class ChatView(ctk.CTkFrame):
         except Exception:
             pass  # 圖片顯示失敗不影響對話（路徑已在回覆文字裡）
 
+    def _add_file_link(self, path):
+        """產生的文件顯示成可點的檔案卡片，點擊用預設程式開啟。"""
+        p = Path(path)
+        icon = {".docx": "📝", ".pptx": "📊", ".pdf": "📄"}.get(p.suffix.lower(), "📄")
+        row = ctk.CTkFrame(self.msg_frame, fg_color="transparent")
+        row.pack(fill="x", padx=8, pady=2)
+        ctk.CTkButton(
+            row, text=f"{icon}  {p.name}", anchor="w", height=34, corner_radius=8,
+            fg_color=("gray80", "gray25"), text_color=("gray10", "gray90"),
+            hover_color=("gray70", "gray30"),
+            command=lambda: self._open_file(p),
+        ).pack(anchor="w", padx=6)
+        self._scroll_bottom()
+
+    @staticmethod
+    def _open_file(p: Path):
+        import os
+        try:
+            os.startfile(str(p))                 # Windows：預設程式開啟
+        except (AttributeError, OSError):
+            import webbrowser
+            webbrowser.open(p.as_uri())
+
     def _add_spinner(self) -> ctk.CTkFrame:
         row = ctk.CTkFrame(self.msg_frame, fg_color="transparent")
         row.pack(fill="x", padx=8, pady=3)
@@ -339,12 +364,17 @@ class ChatView(ctk.CTkFrame):
                 continue
             self._add_bubble(text, "user" if role == "user" else "assistant")
             if role == "assistant":
-                # 回覆裡的 🖼️ 路徑若檔案還在，重新顯示圖片
+                # 回覆裡的 🖼️/📄 路徑若檔案還在，重新顯示圖片/檔案卡片
                 for line in text.splitlines():
-                    if line.strip().startswith("🖼️"):
-                        p = Path(line.strip().lstrip("🖼️").strip())
+                    line = line.strip()
+                    if line.startswith("🖼️"):
+                        p = Path(line.lstrip("🖼️").strip())
                         if p.exists():
                             self._add_image(p)
+                    elif line.startswith("📄"):
+                        p = Path(line.lstrip("📄").strip())
+                        if p.exists():
+                            self._add_file_link(p)
 
     @staticmethod
     def _content_text(content) -> str:
