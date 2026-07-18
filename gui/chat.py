@@ -1118,6 +1118,22 @@ class ChatView(ctk.CTkFrame):
     # 訊息泡泡
     # ─────────────────────────────────────────────
 
+    DEFAULT_BUBBLE_MAX_LINES = 15
+
+    def _bubble_max_lines(self) -> int:
+        """訊息泡泡的最大顯示行數（config.json 的 bubble_max_lines）。"""
+        from agent.auth import load_config
+
+        try:
+            return max(1, int(
+                load_config().get(
+                    "bubble_max_lines",
+                    self.DEFAULT_BUBBLE_MAX_LINES,
+                )
+            ))
+        except Exception:
+            return self.DEFAULT_BUBBLE_MAX_LINES
+
     def _fit_textbox_height(
         self,
         textbox: ctk.CTkTextbox,
@@ -1267,8 +1283,12 @@ class ChatView(ctk.CTkFrame):
             pady=8,
         )
 
-        # 依實際顯示行數調整高度（中文寬度粗估會失準）
-        self._fit_textbox_height(textbox, max_lines=15)
+        # 依實際顯示行數調整高度（中文寬度粗估會失準）；
+        # 超過設定的最大行數時固定高度、泡泡內捲動
+        self._fit_textbox_height(
+            textbox,
+            max_lines=self._bubble_max_lines(),
+        )
 
         # 每個訊息泡泡皆可使用滑鼠滾輪
         self._bind_bubble_scroll(textbox)
