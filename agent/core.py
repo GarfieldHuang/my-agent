@@ -47,6 +47,19 @@ class Agent:
         self.last_images: list[Path] = []   # 本輪 chat 產生的圖片路徑（GUI 顯示用）
         self.last_files:  list[Path] = []   # 本輪 chat 產生的文件路徑（GUI 顯示用）
 
+        # 串流回呼：callable(kind, data)，kind ∈ round_start / thinking / text。
+        # 從背景 asyncio thread 呼叫，GUI 端需自行轉回主執行緒。
+        self.on_stream = None
+
+    def _emit(self, kind: str, data: str = "") -> None:
+        callback = self.on_stream
+        if callback is None:
+            return
+        try:
+            callback(kind, data)
+        except Exception:
+            log.exception("on_stream callback 失敗")
+
     # ── Public API ────────────────────────────────
 
     async def chat(
@@ -111,6 +124,9 @@ class Agent:
             text_chunks:     list[str] = []
             func_calls: dict[str, dict] = {}
 
+            # 新一輪開始（工具呼叫後重跑時，讓 GUI 清掉上一輪的暫定文字）
+            self._emit("round_start")
+
             try:
                 stream = await self.client.responses.create(
                     model=self.model,
@@ -143,11 +159,15 @@ class Agent:
 
                 # ── 推理摘要（思考過程）────────────────
                 if etype == "response.reasoning_summary_text.delta":
-                    thinking_chunks.append(getattr(event, "delta", ""))
+                    delta = getattr(event, "delta", "")
+                    thinking_chunks.append(delta)
+                    self._emit("thinking", delta)
 
                 # ── 最終回覆文字 ──────────────────────
                 elif etype == "response.output_text.delta":
-                    text_chunks.append(getattr(event, "delta", ""))
+                    delta = getattr(event, "delta", "")
+                    text_chunks.append(delta)
+                    self._emit("text", delta)
 
                 # ── 工具呼叫：開始 ────────────────────
                 elif etype == "response.output_item.added":

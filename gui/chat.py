@@ -1,6 +1,7 @@
 """聊天介面：訊息泡泡、推理展開區塊、輸入欄、附加檔案。"""
 
 import logging
+import queue
 import threading
 from pathlib import Path
 import customtkinter as ctk
@@ -952,6 +953,15 @@ class ChatView(ctk.CTkFrame):
             state="disabled",
         )
 
+        # ── 串流狀態 ──────────────────────────────
+        # agent 在背景 thread 發片段 → queue → GUI 主執行緒消化
+        self._stream_q: queue.Queue = queue.Queue()
+        self._stream_row = None
+        self._stream_box = None
+        self.app.agent.on_stream = (
+            lambda kind, data: self._stream_q.put((kind, data))
+        )
+
         future = self.app.run_async(
             self.app.agent.chat(
                 text,
@@ -967,24 +977,83 @@ class ChatView(ctk.CTkFrame):
             ),
         )
 
+    def _drain_stream(self, spinner):
+        """把背景送來的串流片段畫到即時泡泡上。"""
+
+        got_text = False
+
+        try:
+            while True:
+                kind, data = self._stream_q.get_nowait()
+
+                if kind == "round_start":
+                    # 工具呼叫後重跑：清掉上一輪的暫定文字
+                    if self._stream_box is not None:
+                        self._stream_box.configure(state="normal")
+                        self._stream_box.delete("1.0", "end")
+                        self._stream_box.configure(state="disabled")
+
+                elif kind == "text":
+                    if self._stream_box is None:
+                        if spinner.winfo_exists():
+                            spinner.destroy()
+                        self._stream_row, self._stream_box = (
+                            self._add_stream_bubble()
+                        )
+
+                    self._stream_box.configure(state="normal")
+                    self._stream_box.insert("end", data)
+                    self._stream_box.configure(state="disabled")
+                    got_text = True
+
+                # kind == "thinking"：維持 spinner 顯示即可
+
+        except queue.Empty:
+            pass
+
+        if got_text and self._stream_box is not None:
+            self._fit_textbox_height(
+                self._stream_box,
+                max_lines=self._bubble_max_lines(),
+            )
+
     def _poll(self, future, spinner):
+        self._drain_stream(spinner)
+
         if future.done():
-            spinner.destroy()
+            if spinner.winfo_exists():
+                spinner.destroy()
 
             self.send_btn.configure(
                 state="normal",
             )
 
+            self.app.agent.on_stream = None
+
             try:
                 thinking, reply = future.result()
 
                 if thinking:
-                    self._add_reasoning(thinking)
+                    self._add_reasoning(
+                        thinking,
+                        before=self._stream_row,
+                    )
 
-                self._add_bubble(
-                    reply,
-                    "assistant",
-                )
+                if self._stream_box is not None:
+                    # 以最終文字取代串流內容（含圖片/檔案路徑附註）
+                    self._stream_box.configure(state="normal")
+                    self._stream_box.delete("1.0", "end")
+                    self._stream_box.insert("1.0", reply)
+                    self._stream_box.configure(state="disabled")
+                    self._fit_textbox_height(
+                        self._stream_box,
+                        max_lines=self._bubble_max_lines(),
+                    )
+                else:
+                    self._add_bubble(
+                        reply,
+                        "assistant",
+                    )
 
                 for image_path in getattr(
                     self.app.agent,
@@ -1009,7 +1078,7 @@ class ChatView(ctk.CTkFrame):
                 )
         else:
             self.after(
-                100,
+                80,
                 lambda: self._poll(
                     future,
                     spinner,
@@ -1299,24 +1368,71 @@ class ChatView(ctk.CTkFrame):
 
         self._scroll_bottom()
 
+    def _add_stream_bubble(self):
+        """建立串流中的 assistant 泡泡，回傳 (row, textbox)。"""
+
+        row = ctk.CTkFrame(
+            self.msg_frame,
+            fg_color="transparent",
+        )
+        row.pack(fill="x", padx=8, pady=3)
+
+        bubble = ctk.CTkFrame(
+            row,
+            fg_color=("gray82", "gray22"),
+            corner_radius=14,
+        )
+        bubble.pack(anchor="w", padx=6)
+
+        textbox = ctk.CTkTextbox(
+            bubble,
+            width=480,
+            height=36,
+            wrap="word",
+            fg_color=("gray82", "gray22"),
+            text_color=("gray10", "gray95"),
+            border_width=0,
+            corner_radius=10,
+            scrollbar_button_color=("gray65", "gray40"),
+            scrollbar_button_hover_color=("gray50", "gray55"),
+            activate_scrollbars=True,
+            font=ctk.CTkFont(size=13),
+        )
+        textbox.configure(state="disabled")
+        textbox.pack(padx=10, pady=8)
+
+        self._bind_bubble_scroll(textbox)
+        self._bind_outer_scroll(row)
+        self._bind_outer_scroll(bubble)
+
+        self._scroll_bottom()
+
+        return row, textbox
+
     # ─────────────────────────────────────────────
     # 推理展開區塊
     # ─────────────────────────────────────────────
 
-    def _add_reasoning(self, thinking: str):
+    def _add_reasoning(self, thinking: str, before=None):
         """
         可展開或收合的推理過程區塊。
+        before：指定要插在哪個元件之前（串流泡泡完成後補在其上方）。
         """
 
         container = ctk.CTkFrame(
             self.msg_frame,
             fg_color="transparent",
         )
-        container.pack(
-            fill="x",
-            padx=8,
-            pady=(4, 0),
-        )
+
+        pack_kwargs = {
+            "fill": "x",
+            "padx": 8,
+            "pady": (4, 0),
+        }
+        if before is not None and before.winfo_exists():
+            pack_kwargs["before"] = before
+
+        container.pack(**pack_kwargs)
 
         toggle_button = ctk.CTkButton(
             container,
