@@ -19,6 +19,7 @@ class ChatView(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
 
         self._pending_files: list[str] = []
+        self._chip_images: list = []   # 縮圖的 CTkImage 參照，防止被 GC
 
         # 對話重建與捲動排程控制。
         self._rendering_history = False
@@ -64,13 +65,27 @@ class ChatView(ctk.CTkFrame):
             pady=(4, 0),
         )
 
+        # 附件縮圖列（有附件時才顯示）
+        self.attach_frame = ctk.CTkFrame(
+            self,
+            fg_color="transparent",
+        )
+        self.attach_frame.grid(
+            row=2,
+            column=0,
+            sticky="w",
+            padx=14,
+            pady=(2, 0),
+        )
+        self.attach_frame.grid_remove()
+
         # 輸入區
         input_frame = ctk.CTkFrame(
             self,
             height=70,
         )
         input_frame.grid(
-            row=2,
+            row=3,
             column=0,
             sticky="ew",
             padx=10,
@@ -172,6 +187,78 @@ class ChatView(ctk.CTkFrame):
             padx=(2, 8),
             pady=8,
         )
+
+        # ── 模型 / 推理強度快速選單 ────────────────
+        from gui.settings import MODELS, REASONING
+        from agent.auth import load_config, get_model
+
+        opts_row = ctk.CTkFrame(
+            input_frame,
+            fg_color="transparent",
+        )
+        opts_row.grid(
+            row=1,
+            column=0,
+            columnspan=3,
+            padx=8,
+            pady=(0, 6),
+            sticky="w",
+        )
+
+        cfg = load_config()
+        model = cfg.get("model") or get_model()
+        model_values = (
+            MODELS if model in MODELS else MODELS + [model]
+        )
+
+        ctk.CTkLabel(
+            opts_row,
+            text="模型",
+            font=ctk.CTkFont(size=11),
+            text_color="gray",
+        ).grid(row=0, column=0, padx=(2, 6))
+
+        self.model_var = ctk.StringVar(value=model)
+        self.model_menu = ctk.CTkOptionMenu(
+            opts_row,
+            values=model_values,
+            variable=self.model_var,
+            width=150,
+            height=26,
+            font=ctk.CTkFont(size=12),
+            command=lambda _v: self._apply_chat_options(),
+        )
+        self.model_menu.grid(row=0, column=1, padx=(0, 14))
+
+        # 推理強度用短標籤（取全名「（」之前的部分）
+        self._effort_short = [
+            (key, label.split("（")[0])
+            for key, label in REASONING
+        ]
+        effort = cfg.get("reasoning_effort", "medium")
+        short = next(
+            (s for k, s in self._effort_short if k == effort),
+            "Medium",
+        )
+
+        ctk.CTkLabel(
+            opts_row,
+            text="推理",
+            font=ctk.CTkFont(size=11),
+            text_color="gray",
+        ).grid(row=0, column=2, padx=(0, 6))
+
+        self.effort_var = ctk.StringVar(value=short)
+        self.effort_menu = ctk.CTkOptionMenu(
+            opts_row,
+            values=[s for _k, s in self._effort_short],
+            variable=self.effort_var,
+            width=110,
+            height=26,
+            font=ctk.CTkFont(size=12),
+            command=lambda _v: self._apply_chat_options(),
+        )
+        self.effort_menu.grid(row=0, column=3)
 
         self._add_system(
             "登入後即可開始對話。Enter 送出，Shift+Enter 換行。"
@@ -294,26 +381,121 @@ class ChatView(ctk.CTkFrame):
         return getattr(event, "action", "copy")
 
     def _restore_drop_style(self):
-        """還原附件列的文字顏色與附件名稱。"""
+        """還原附件列的提示文字與縮圖列。"""
 
-        self.attach_bar.configure(text_color="gray")
+        self.attach_bar.configure(text="", text_color="gray")
         self._update_attachment_bar()
 
     def _update_attachment_bar(self):
-        """更新待送出附件的名稱。"""
+        """重建待送出附件的縮圖列（圖片顯示縮圖，其他顯示檔名，均附移除鈕）。"""
+
+        for widget in self.attach_frame.winfo_children():
+            widget.destroy()
+        self._chip_images = []
 
         if not self._pending_files:
-            self.attach_bar.configure(text="")
+            self.attach_frame.grid_remove()
             return
 
-        names = ", ".join(
-            Path(path).name
-            for path in self._pending_files
-        )
+        self.attach_frame.grid()
 
-        self.attach_bar.configure(
-            text=f"📎 {names}",
+        image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico"}
+
+        for col, path in enumerate(self._pending_files):
+            file_path = Path(path)
+
+            chip = ctk.CTkFrame(
+                self.attach_frame,
+                corner_radius=8,
+            )
+            chip.grid(row=0, column=col, padx=(0, 6), pady=2)
+
+            thumb = None
+            if file_path.suffix.lower() in image_exts:
+                try:
+                    img = Image.open(file_path)
+                    w, h = img.size
+                    scale = 48 / max(w, h)
+                    thumb = ctk.CTkImage(
+                        light_image=img,
+                        dark_image=img,
+                        size=(
+                            max(1, round(w * scale)),
+                            max(1, round(h * scale)),
+                        ),
+                    )
+                    self._chip_images.append(thumb)
+                except Exception:
+                    thumb = None
+
+            if thumb is not None:
+                ctk.CTkLabel(
+                    chip, text="", image=thumb
+                ).grid(row=0, column=0, padx=(6, 2), pady=4)
+            else:
+                ctk.CTkLabel(
+                    chip,
+                    text=f"📎 {file_path.name}",
+                    font=ctk.CTkFont(size=12),
+                ).grid(row=0, column=0, padx=(8, 2), pady=4)
+
+            ctk.CTkButton(
+                chip,
+                text="✕",
+                width=22,
+                height=22,
+                corner_radius=6,
+                fg_color="transparent",
+                text_color="gray",
+                hover_color=("gray70", "gray30"),
+                command=lambda p=path: self._remove_attachment(p),
+            ).grid(row=0, column=1, padx=(0, 4))
+
+    def _remove_attachment(self, path: str):
+        """移除單一待送出附件。"""
+
+        if path in self._pending_files:
+            self._pending_files.remove(path)
+
+        self._update_attachment_bar()
+
+    def _apply_chat_options(self, _value=None):
+        """Chat 快速選單變更時寫入設定並即時更新 agent。"""
+
+        from agent.auth import load_config, save_config
+
+        cfg = load_config()
+        cfg["model"] = self.model_var.get()
+
+        short = self.effort_var.get()
+        cfg["reasoning_effort"] = next(
+            (k for k, s in self._effort_short if s == short),
+            "medium",
         )
+        save_config(cfg)
+
+        if self.app.agent:
+            self.app.agent.model            = cfg["model"]
+            self.app.agent.reasoning_effort = cfg["reasoning_effort"]
+
+    def _sync_chat_options(self):
+        """從設定檔同步選單（設定頁改過時保持一致）。"""
+
+        from agent.auth import load_config, get_model
+
+        cfg = load_config()
+        model = cfg.get("model") or get_model()
+
+        values = list(self.model_menu.cget("values"))
+        if model not in values:
+            self.model_menu.configure(values=values + [model])
+        self.model_var.set(model)
+
+        effort = cfg.get("reasoning_effort", "medium")
+        self.effort_var.set(next(
+            (s for k, s in self._effort_short if k == effort),
+            "Medium",
+        ))
 
     # ─────────────────────────────────────────────
     # 滑鼠滾輪控制
@@ -731,9 +913,8 @@ class ChatView(ctk.CTkFrame):
         files = self._pending_files
         self._pending_files = []
 
-        self.attach_bar.configure(
-            text="",
-        )
+        self.attach_bar.configure(text="")
+        self._update_attachment_bar()
 
         self._add_bubble(
             text,
@@ -871,16 +1052,11 @@ class ChatView(ctk.CTkFrame):
         if not paths:
             return None
 
-        self._pending_files.extend(paths)
+        for path in paths:
+            if path not in self._pending_files:
+                self._pending_files.append(path)
 
-        names = ", ".join(
-            Path(path).name
-            for path in self._pending_files
-        )
-
-        self.attach_bar.configure(
-            text=f"📎 {names}",
-        )
+        self._update_attachment_bar()
 
         return "break"
 
@@ -1508,6 +1684,7 @@ class ChatView(ctk.CTkFrame):
 
             self._pending_files = []
             self.attach_bar.configure(text="")
+            self._update_attachment_bar()
 
             # 先讓舊元件的刪除反映到 Canvas。
             self.update_idletasks()
@@ -1649,5 +1826,6 @@ class ChatView(ctk.CTkFrame):
         )
 
     def on_show(self):
+        self._sync_chat_options()
         self.input.focus_set()
         

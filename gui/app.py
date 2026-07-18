@@ -158,8 +158,9 @@ class App(DnDCTk):
         sidebar.grid_propagate(False)
         sidebar.grid_columnconfigure(0, weight=1)
 
-        # 對話紀錄區占用剩餘垂直空間。
-        sidebar.grid_rowconfigure(7, weight=1)
+        # 對話紀錄「列表」（row 8）占用剩餘垂直空間；
+        # row 7 是標題列，不能給 weight，否則放大視窗時標題格會被撐開。
+        sidebar.grid_rowconfigure(8, weight=1)
 
         # ── My Agent 標題 ─────────────────────────
         # 原本：
