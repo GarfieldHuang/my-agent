@@ -1,6 +1,7 @@
 """聊天介面：訊息泡泡、推理展開區塊、輸入欄、附加檔案。"""
 
 import logging
+import threading
 from pathlib import Path
 import customtkinter as ctk
 from PIL import Image
@@ -260,6 +261,9 @@ class ChatView(ctk.CTkFrame):
         )
         self.effort_menu.grid(row=0, column=3)
 
+        # 背景抓取後端即時模型列表更新選單
+        self._fetch_models_async()
+
         self._add_system(
             "登入後即可開始對話。Enter 送出，Shift+Enter 換行。"
         )
@@ -477,6 +481,27 @@ class ChatView(ctk.CTkFrame):
         if self.app.agent:
             self.app.agent.model            = cfg["model"]
             self.app.agent.reasoning_effort = cfg["reasoning_effort"]
+
+    def _fetch_models_async(self):
+        """背景抓取後端即時模型列表；失敗或未登入時維持現有選單。"""
+
+        def worker():
+            from agent.auth import fetch_available_models
+
+            models = fetch_available_models()
+            if models:
+                try:
+                    self.after(0, lambda: self._apply_models(models))
+                except Exception:
+                    pass   # 視窗已關閉
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_models(self, models: list[str]):
+        current = self.model_var.get()
+        if current and current not in models:
+            models = models + [current]
+        self.model_menu.configure(values=models)
 
     def _sync_chat_options(self):
         """從設定檔同步選單（設定頁改過時保持一致）。"""
@@ -1824,6 +1849,9 @@ class ChatView(ctk.CTkFrame):
             "    已連線，開始對話吧！",
             image=self.check_icon,
         )
+
+        # 登入完成後再抓一次即時模型列表（啟動時可能尚未登入）
+        self._fetch_models_async()
 
     def on_show(self):
         self._sync_chat_options()
