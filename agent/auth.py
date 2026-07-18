@@ -125,6 +125,7 @@ def _try_refresh(token: dict, client_id: str) -> dict | None:
         }, timeout=10, verify=_SSL_VERIFY)
         if resp.status_code == 200:
             new_token = {**token, **resp.json()}
+            new_token.pop("expires_at", None)   # 移除舊值，讓 _save_token 依新的 expires_in 重算
             _save_token(new_token)
             return new_token
     except Exception:
