@@ -1118,6 +1118,45 @@ class ChatView(ctk.CTkFrame):
     # 訊息泡泡
     # ─────────────────────────────────────────────
 
+    def _fit_textbox_height(
+        self,
+        textbox: ctk.CTkTextbox,
+        max_lines: int = 15,
+        pad: int = 26,   # CTkTextbox 圓角內距（上下各約 corner_radius）+ 餘裕
+    ):
+        """依實際換行後的顯示行數調整高度。
+
+        字數粗估對中文（全形字寬）嚴重失準，改在排版完成後
+        用 tk 的 displaylines 量真實行數。超過 max_lines 才出現
+        泡泡內捲軸。
+        """
+
+        def fit(attempt: int = 0):
+            try:
+                tk_text = textbox._textbox
+
+                # 寬度尚未確定時換行數不可信，稍後重量
+                if tk_text.winfo_width() <= 1 and attempt < 10:
+                    textbox.after(30, lambda: fit(attempt + 1))
+                    return
+
+                # displaylines 回傳的是「換行次數」，單行時為 None → 行數要 +1
+                lines = tk_text.count("1.0", "end-1c", "displaylines")
+                if isinstance(lines, (tuple, list)):
+                    lines = lines[0]
+                lines = max(1, min(int(lines or 0) + 1, max_lines))
+
+                line_height = int(tk_text.tk.call(
+                    "font", "metrics", tk_text.cget("font"), "-linespace"
+                ))
+
+                textbox.configure(height=lines * line_height + pad)
+                self._scroll_bottom()
+            except Exception:
+                pass   # 元件可能已被銷毀
+
+        textbox.after_idle(fit)
+
     def _add_bubble(
         self,
         text: str,
@@ -1191,28 +1230,12 @@ class ChatView(ctk.CTkFrame):
             padx=6,
         )
 
-        # 粗估文字行數
-        estimated_lines = (
-            text.count("\n")
-            + max(
-                1,
-                len(text) // 55,
-            )
-        )
-
-        # 長訊息最高 300 像素，超過後使用泡泡內 scrollbar
-        bubble_height = min(
-            max(
-                estimated_lines * 28,
-                36,
-            ),
-            300,
-        )
-
+        # 高度先給一行，插入文字後依實際顯示行數調整
+        # （最多 15 行，超過才用泡泡內 scrollbar）
         textbox = ctk.CTkTextbox(
             bubble,
             width=480,
-            height=bubble_height,
+            height=36,
             wrap="word",
             fg_color=background_color,
             text_color=text_color,
@@ -1243,6 +1266,9 @@ class ChatView(ctk.CTkFrame):
             padx=10,
             pady=8,
         )
+
+        # 依實際顯示行數調整高度（中文寬度粗估會失準）
+        self._fit_textbox_height(textbox, max_lines=15)
 
         # 每個訊息泡泡皆可使用滑鼠滾輪
         self._bind_bubble_scroll(textbox)
@@ -1299,26 +1325,10 @@ class ChatView(ctk.CTkFrame):
             corner_radius=8,
         )
 
-        estimated_lines = (
-            thinking.count("\n")
-            + max(
-                1,
-                len(thinking) // 60,
-            )
-        )
-
-        panel_height = min(
-            max(
-                estimated_lines * 18,
-                50,
-            ),
-            260,
-        )
-
         textbox = ctk.CTkTextbox(
             panel,
             wrap="word",
-            height=panel_height,
+            height=50,   # 展開時依實際行數調整
             fg_color=(
                 "gray88",
                 "gray18",
@@ -1383,6 +1393,9 @@ class ChatView(ctk.CTkFrame):
                 toggle_button.configure(
                     text="▼  思考過程",
                 )
+
+                # 首次展開後才知道實際寬度，依顯示行數調高度
+                self._fit_textbox_height(textbox, max_lines=12)
 
                 self._scroll_bottom()
 
