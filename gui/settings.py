@@ -1,7 +1,7 @@
 """設定頁面：模型選擇、system prompt。"""
 import customtkinter as ctk
 
-MODELS = ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro", "gpt-5.3-codex"]
+MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]
 REASONING = [
     ("medium", "Medium（預設，平衡速度與深度）"),
     ("high",   "High（更深入，較慢）"),
