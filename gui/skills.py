@@ -35,9 +35,16 @@ class SkillsView(ctk.CTkFrame):
         ).grid(row=0, column=0, sticky="w")
 
         ctk.CTkButton(
+            header, text="匯入 ZIP",
+            width=100,
+            fg_color=("gray60", "gray35"), hover_color=("gray50", "gray25"),
+            command=self._import_zip,
+        ).grid(row=0, column=1, sticky="e", padx=(0, 8))
+
+        ctk.CTkButton(
             header, text="＋ 新增 Skill",
             width=120, command=self._new,
-        ).grid(row=0, column=1, sticky="e")
+        ).grid(row=0, column=2, sticky="e")
 
         ctk.CTkLabel(
             self,
@@ -219,6 +226,42 @@ class SkillsView(ctk.CTkFrame):
             shutil.rmtree(self._editing_path.parent, ignore_errors=True)
 
         self._hide_editor()
+        self.refresh()
+
+    def _import_zip(self):
+        """匯入 Agent Skills 格式 zip（相容 ChatGPT / Claude 匯出）。"""
+        from tkinter import filedialog
+
+        from agent.skills import import_skill_zip
+
+        zip_path = filedialog.askopenfilename(
+            title="選擇 skill zip 檔",
+            filetypes=[("Zip 檔", "*.zip"), ("所有檔案", "*.*")],
+        )
+        if not zip_path:
+            return
+
+        try:
+            names = import_skill_zip(zip_path)
+        except FileExistsError as e:
+            if not messagebox.askyesno(
+                "Skill 已存在",
+                f"以下 skill 已存在：{e}\n要覆蓋嗎？",
+            ):
+                return
+            try:
+                names = import_skill_zip(zip_path, overwrite=True)
+            except Exception as e2:
+                messagebox.showerror("匯入失敗", str(e2))
+                return
+        except Exception as e:
+            messagebox.showerror("匯入失敗", str(e))
+            return
+
+        messagebox.showinfo(
+            "匯入完成",
+            "已匯入 skill：" + "、".join(names),
+        )
         self.refresh()
 
     def _delete(self, skill: dict):

@@ -16,6 +16,9 @@ SKILL.md 格式：
 """
 import logging
 import re
+import shutil
+import tempfile
+import zipfile
 from pathlib import Path
 
 log = logging.getLogger("my-agent")
@@ -85,6 +88,74 @@ def load_skill(name: str) -> str | None:
                 log.error("skill 讀取失敗 %s: %s", name, e)
                 return None
     return None
+
+
+# ── ZIP 匯入（相容 ChatGPT / Claude 的 Agent Skills zip）──
+
+def import_skill_zip(zip_path: str | Path, overwrite: bool = False) -> list[str]:
+    """匯入 Agent Skills 格式的 zip，回傳匯入的 skill 名稱列表。
+
+    支援兩種常見結構：
+      1. <skill-name>/SKILL.md （ChatGPT 官方匯出：單一頂層資料夾）
+      2. SKILL.md 在 zip 根目錄（資料夾名取 frontmatter name 或 zip 檔名）
+    一個 zip 含多個 skill 資料夾也可以。
+
+    衝突時 raise FileExistsError（訊息含衝突名稱）；
+    格式錯誤 raise ValueError。
+    """
+    zip_path = Path(zip_path)
+
+    with zipfile.ZipFile(zip_path) as zf:
+        # zip-slip 防護：拒絕絕對路徑與 ".."
+        for member in zf.namelist():
+            part_list = Path(member).parts
+            if Path(member).is_absolute() or ".." in part_list:
+                raise ValueError(f"zip 內含不安全路徑：{member}")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zf.extractall(tmp_dir)
+            tmp = Path(tmp_dir)
+
+            if (tmp / "SKILL.md").exists():
+                # SKILL.md 直接在根目錄 → 整包視為一個 skill
+                skill_dirs = [tmp]
+            else:
+                # 只取「最上層」含 SKILL.md 的資料夾（略過巢狀誤判）
+                candidates = sorted(
+                    (md.parent for md in tmp.rglob("SKILL.md")),
+                    key=lambda p: len(p.parts),
+                )
+                skill_dirs = []
+                for d in candidates:
+                    if not any(a in d.parents for a in skill_dirs):
+                        skill_dirs.append(d)
+
+            if not skill_dirs:
+                raise ValueError("zip 裡找不到 SKILL.md，不是有效的 skill 包。")
+
+            # 先算目的地並檢查衝突
+            plans: list[tuple[Path, Path]] = []
+            for d in skill_dirs:
+                if d == tmp:
+                    meta, _ = _parse((d / "SKILL.md").read_text(encoding="utf-8"))
+                    name = meta.get("name") or zip_path.stem
+                else:
+                    name = d.name
+                plans.append((d, REPO_SKILLS_DIR / name))
+
+            conflicts = [t.name for _s, t in plans if t.exists()]
+            if conflicts and not overwrite:
+                raise FileExistsError("、".join(conflicts))
+
+            imported = []
+            for source, target in plans:
+                if target.exists():
+                    shutil.rmtree(target)
+                shutil.copytree(source, target)
+                imported.append(target.name)
+                log.info("skill 已匯入：%s ← %s", target.name, zip_path)
+
+            return imported
 
 
 # ── 系統提示注入 ──────────────────────────────────
