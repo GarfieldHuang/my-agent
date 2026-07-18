@@ -254,6 +254,55 @@ def get_openai_client():
     )
 
 
+def fetch_available_models() -> list[str]:
+    """從 codex 後端取得可用模型 slug 列表。
+
+    未登入、token 過期且無法刷新、或請求失敗時回傳空 list（不觸發 OAuth 流程）。
+    會過濾掉非對話用途的項目（如 codex-auto-review）。
+    """
+    token = _load_token()
+    if token and _is_expired(token):
+        client_id = os.getenv("OPENAI_CLIENT_ID") or DEFAULT_CLIENT_ID
+        token = _try_refresh(token, client_id)
+    if not token:
+        return []
+
+    access_token = token["access_token"]
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "originator":    "my-agent",
+    }
+    account_id = _extract_account_id(access_token)
+    if account_id:
+        headers["chatgpt-account-id"] = account_id
+
+    try:
+        resp = httpx.get(
+            f"{CODEX_BASE_URL}/models",
+            params={"client_version": "99.0.0"},
+            headers=headers,
+            timeout=10,
+            verify=_SSL_VERIFY,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return []
+
+    items = data.get("models", data.get("data", [])) if isinstance(data, dict) else data
+    slugs: list[str] = []
+    for item in items or []:
+        if isinstance(item, str):
+            slug = item
+        elif isinstance(item, dict):
+            slug = item.get("slug") or item.get("id") or item.get("model") or ""
+        else:
+            continue
+        if slug and "review" not in slug and slug not in slugs:
+            slugs.append(slug)
+    return slugs
+
+
 def logout() -> None:
     cleared = False
     try:

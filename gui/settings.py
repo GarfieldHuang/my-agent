@@ -1,4 +1,6 @@
 """設定頁面：模型選擇、system prompt。"""
+import threading
+
 import customtkinter as ctk
 
 MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]
@@ -15,8 +17,10 @@ class SettingsView(ctk.CTkFrame):
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
         self.app = app
+        self._models = list(MODELS)   # 先用內建列表，背景抓到即時列表後再更新
         self.grid_columnconfigure(0, weight=1)
         self._build()
+        self._fetch_models()
 
     def _build(self):
         ctk.CTkLabel(
@@ -34,7 +38,7 @@ class SettingsView(ctk.CTkFrame):
         )
         self.model_var = ctk.StringVar()
         self.model_menu = ctk.CTkOptionMenu(
-            card, values=MODELS, variable=self.model_var, width=220
+            card, values=self._models, variable=self.model_var, width=220
         )
         self.model_menu.grid(row=0, column=1, padx=20, pady=(20, 6), sticky="w")
 
@@ -67,9 +71,9 @@ class SettingsView(ctk.CTkFrame):
         from agent.auth import load_config, get_model
         cfg = load_config()
         model = cfg.get("model") or get_model()
-        if model not in MODELS:
-            MODELS.append(model)
-            self.model_menu.configure(values=MODELS)
+        if model not in self._models:
+            self._models.append(model)
+            self.model_menu.configure(values=self._models)
         self.model_var.set(model)
 
         effort = cfg.get("reasoning_effort", "medium")
@@ -96,6 +100,25 @@ class SettingsView(ctk.CTkFrame):
         ctk.CTkButton(self, text="✓ 已儲存", state="disabled",
                       fg_color="green", width=100).place(x=0, y=0)
         self.after(1500, lambda: None)  # 簡單的視覺回饋
+
+    def _fetch_models(self):
+        """背景抓取後端即時模型列表；失敗或未登入時維持內建列表。"""
+        def worker():
+            from agent.auth import fetch_available_models
+            models = fetch_available_models()
+            if models:
+                try:
+                    self.after(0, lambda: self._apply_models(models))
+                except Exception:
+                    pass   # 視窗已關閉
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_models(self, models):
+        current = self.model_var.get()
+        if current and current not in models:
+            models = models + [current]
+        self._models = models
+        self.model_menu.configure(values=self._models)
 
     def on_show(self):
         self._load()
