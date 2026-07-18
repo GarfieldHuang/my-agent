@@ -23,6 +23,7 @@ from .doctools import DOC_TOOLS, call_doc_tool, is_doc_tool
 from .files import FileUploader
 from .imagegen import disable_model_param, image_tool, save_image_b64
 from .mcp_manager import MCPManager
+from .skills import call_skill_tool, is_skill_tool, skill_tools, skills_index_prompt
 
 MAX_TOOL_ROUNDS = 10
 
@@ -79,8 +80,17 @@ class Agent:
     # ── Core loop ─────────────────────────────────
 
     def _build_tools(self) -> list:
-        """MCP 工具 + hosted 生圖工具 + 本地文件工具。"""
-        return list(self.mcp.openai_tools() or []) + [image_tool()] + DOC_TOOLS
+        """MCP 工具 + hosted 生圖工具 + 本地文件工具 + skill 載入工具。"""
+        return (
+            list(self.mcp.openai_tools() or [])
+            + [image_tool()]
+            + DOC_TOOLS
+            + skill_tools()
+        )
+
+    def _instructions(self) -> str:
+        """system prompt + skill 目錄（每輪重算，skill 可熱加）。"""
+        return self.system_prompt + skills_index_prompt()
 
     async def _run_loop(self) -> tuple[str, str]:
         tools = self._build_tools()
@@ -105,7 +115,7 @@ class Agent:
                 stream = await self.client.responses.create(
                     model=self.model,
                     input=input_items,
-                    instructions=self.system_prompt,
+                    instructions=self._instructions(),
                     tools=tools,
                     store=False,
                     stream=True,
@@ -119,7 +129,7 @@ class Agent:
                     stream = await self.client.responses.create(
                         model=self.model,
                         input=input_items,
-                        instructions=self.system_prompt,
+                        instructions=self._instructions(),
                         tools=tools,
                         store=False,
                         stream=True,
@@ -191,7 +201,9 @@ class Agent:
                     raw  = fc["arguments"].strip()
                     args = json.loads(raw) if raw else {}
                     log.debug("TOOL calling %s args=%r", fc["name"], args)
-                    if is_doc_tool(fc["name"]):
+                    if is_skill_tool(fc["name"]):
+                        result = call_skill_tool(args)
+                    elif is_doc_tool(fc["name"]):
                         result, fpath = call_doc_tool(fc["name"], args)
                         if fpath:
                             self.last_files.append(fpath)
