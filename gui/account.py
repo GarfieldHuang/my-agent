@@ -2,8 +2,11 @@
 import threading
 import customtkinter as ctk
 
+from pathlib import Path
+from PIL import Image
 
 class AccountView(ctk.CTkFrame):
+    
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
         self.app = app
@@ -57,23 +60,52 @@ class AccountView(ctk.CTkFrame):
     # ── 狀態顯示 ─────────────────────────────────
 
     def _refresh(self):
+        
+        assets_dir = Path(__file__).resolve().parent / "assets"
+        
+        self.logged_in_image = ctk.CTkImage(
+            light_image=Image.open(assets_dir / "chatgpt_logo.png"),
+            dark_image=Image.open(assets_dir / "chatgpt_logo.png"),
+            size=(42, 42),
+        )
+        
+        self.logged_out_image = ctk.CTkImage(
+            light_image=Image.open(assets_dir / "log_out.png"),
+            dark_image=Image.open(assets_dir / "log_out.png"),
+            size=(64, 64),
+        )
+        
         from agent.auth import has_valid_token, get_user_info
+        
         if has_valid_token():
             info = get_user_info()
             email = info.get("email", "")
-            plan  = info.get("plan", "")
-            self.status_icon.configure(text="✅")
+            plan = info.get("plan", "")
+        
+            self.status_icon.configure(
+                image=self.logged_in_image,
+                text=""
+            )
+        
             self.status_label.configure(
-                text=f"已登入\n{email}" + (f"\nChatGPT {plan.capitalize()}" if plan else ""),
+                text=f"已登入\n{email}"
+                + (f"\nChatGPT {plan.capitalize()}" if plan else ""),
                 text_color=("gray10", "gray90")
             )
+        
             self.login_btn.configure(text="重新登入")
+        
         else:
-            self.status_icon.configure(text="🔒")
+            self.status_icon.configure(
+                image=self.logged_out_image,
+                text=""
+            )
+        
             self.status_label.configure(
                 text="尚未登入",
                 text_color="gray"
             )
+        
             self.login_btn.configure(text="登入 OpenAI 帳號")
 
     def on_show(self):
