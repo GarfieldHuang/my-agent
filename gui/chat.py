@@ -949,8 +949,14 @@ class ChatView(ctk.CTkFrame):
 
         spinner = self._add_spinner()
 
+        # 執行期間送出鈕變成「停止」
+        self._send_btn_fg = self.send_btn.cget("fg_color")
+        self._send_btn_hover = self.send_btn.cget("hover_color")
         self.send_btn.configure(
-            state="disabled",
+            text="停止",
+            command=self._stop,
+            fg_color="#c0392b",
+            hover_color="#922b21",
         )
 
         # ── 串流狀態 ──────────────────────────────
@@ -975,6 +981,26 @@ class ChatView(ctk.CTkFrame):
                 future,
                 spinner,
             ),
+        )
+
+    def _stop(self):
+        """要求 agent 停止本輪工作（在下一個安全點收尾）。"""
+
+        if self.app.agent:
+            self.app.agent.request_stop()
+
+        self.send_btn.configure(
+            text="停止中…",
+            state="disabled",
+        )
+
+    def _restore_send_btn(self):
+        self.send_btn.configure(
+            text="送出",
+            state="normal",
+            command=self._send,
+            fg_color=getattr(self, "_send_btn_fg", None) or ["#3B8ED0", "#1F6AA5"],
+            hover_color=getattr(self, "_send_btn_hover", None) or ["#36719F", "#144870"],
         )
 
     def _drain_stream(self, spinner):
@@ -1024,9 +1050,7 @@ class ChatView(ctk.CTkFrame):
             if spinner.winfo_exists():
                 spinner.destroy()
 
-            self.send_btn.configure(
-                state="normal",
-            )
+            self._restore_send_btn()
 
             self.app.agent.on_stream = None
 

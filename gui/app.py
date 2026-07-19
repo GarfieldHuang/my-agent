@@ -650,6 +650,7 @@ class App(DnDCTk):
                         "reasoning_effort",
                         "medium",
                     ),
+                    max_tool_rounds=cfg.get("max_tool_rounds"),
                 )
 
                 self._queue.put(

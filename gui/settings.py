@@ -52,17 +52,33 @@ class SettingsView(ctk.CTkFrame):
             text_color="gray", font=ctk.CTkFont(size=12),
         ).grid(row=0, column=1, padx=(8, 0))
 
+        # 工具呼叫上限
+        ctk.CTkLabel(card, text="工具呼叫上限", font=ctk.CTkFont(weight="bold")).grid(
+            row=2, column=0, padx=20, pady=(10, 6), sticky="w"
+        )
+        rounds_row = ctk.CTkFrame(card, fg_color="transparent")
+        rounds_row.grid(row=2, column=1, padx=20, pady=(10, 6), sticky="w")
+
+        self.tool_rounds_entry = ctk.CTkEntry(rounds_row, width=70)
+        self.tool_rounds_entry.grid(row=0, column=0)
+
+        ctk.CTkLabel(
+            rounds_row,
+            text="每則訊息最多跑幾輪工具呼叫（預設 10；瀏覽器自動化建議 25+）",
+            text_color="gray", font=ctk.CTkFont(size=12),
+        ).grid(row=0, column=1, padx=(8, 0))
+
         # 模型 / 推理強度改到 Chat 頁選擇
         ctk.CTkLabel(
             card,
             text="模型與推理強度請在 Chat 頁下方的選單選擇。",
             text_color="gray", font=ctk.CTkFont(size=12),
-        ).grid(row=2, column=1, padx=20, pady=(0, 6), sticky="w")
+        ).grid(row=3, column=1, padx=20, pady=(0, 6), sticky="w")
 
         # 儲存
         ctk.CTkButton(
             card, text="儲存", command=self._save, width=100
-        ).grid(row=3, column=1, padx=20, pady=(6, 20), sticky="e")
+        ).grid(row=4, column=1, padx=20, pady=(6, 20), sticky="e")
 
         self._load()
 
@@ -74,6 +90,12 @@ class SettingsView(ctk.CTkFrame):
 
         self.bubble_lines_entry.delete(0, "end")
         self.bubble_lines_entry.insert(0, str(cfg.get("bubble_max_lines", 15)))
+
+        import os
+        from agent.core import DEFAULT_MAX_TOOL_ROUNDS
+        env_default = int(os.getenv("MAX_TOOL_ROUNDS", DEFAULT_MAX_TOOL_ROUNDS))
+        self.tool_rounds_entry.delete(0, "end")
+        self.tool_rounds_entry.insert(0, str(cfg.get("max_tool_rounds", env_default)))
 
     def _save(self):
         from tkinter import messagebox
@@ -90,13 +112,25 @@ class SettingsView(ctk.CTkFrame):
             )
             return
 
+        try:
+            tool_rounds = int(self.tool_rounds_entry.get().strip())
+            if tool_rounds < 1:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning(
+                "數值無效", "工具呼叫上限請輸入 1 以上的整數。"
+            )
+            return
+
         cfg = load_config()
         cfg["system_prompt"]    = self.prompt_box.get("1.0", "end-1c").strip()
         cfg["bubble_max_lines"] = bubble_lines
+        cfg["max_tool_rounds"]  = tool_rounds
         save_config(cfg)
 
         if self.app.agent:
             self.app.agent.system_prompt = cfg["system_prompt"]
+            self.app.agent.max_tool_rounds = tool_rounds
 
         ctk.CTkButton(self, text="✓ 已儲存", state="disabled",
                       fg_color="green", width=100).place(x=0, y=0)

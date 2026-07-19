@@ -25,7 +25,7 @@ from .imagegen import disable_model_param, image_tool, save_image_b64
 from .mcp_manager import MCPManager
 from .skills import call_skill_tool, is_skill_tool, skill_tools, skills_index_prompt
 
-MAX_TOOL_ROUNDS = 10
+DEFAULT_MAX_TOOL_ROUNDS = 10
 
 
 class Agent:
@@ -36,14 +36,19 @@ class Agent:
         model: str | None = None,
         system_prompt: str = "You are a helpful assistant.",
         reasoning_effort: str = "medium",   # none/low/medium/high/xhigh
+        max_tool_rounds: int | None = None,  # 未指定時讀 MAX_TOOL_ROUNDS 環境變數
     ):
         self.client           = client
         self.mcp              = mcp
         self.model            = model or os.getenv("OPENAI_MODEL", "gpt-5.4")
         self.system_prompt    = system_prompt
         self.reasoning_effort = reasoning_effort
+        self.max_tool_rounds  = max_tool_rounds or int(
+            os.getenv("MAX_TOOL_ROUNDS", DEFAULT_MAX_TOOL_ROUNDS)
+        )
         self.files            = FileUploader(client)
         self.history: list[dict] = []
+        self.cancel_requested = False   # 使用者按「停止」時設為 True（跨執行緒安全）
         self.last_images: list[Path] = []   # 本輪 chat 產生的圖片路徑（GUI 顯示用）
         self.last_files:  list[Path] = []   # 本輪 chat 產生的文件路徑（GUI 顯示用）
 
@@ -72,6 +77,7 @@ class Agent:
         thinking：模型的推理過程（可能為空字串）
         answer：最終回覆
         """
+        self.cancel_requested = False
         content = await self._build_content(user_input, attachments or [])
         self.history.append({"role": "user", "content": content})
 
@@ -86,6 +92,14 @@ class Agent:
             reply = (f"{reply}\n\n" if reply.strip() else "") + f"檔案已產生：\n{paths}"
         self.history.append({"role": "assistant", "content": reply})
         return thinking, reply
+
+    def request_stop(self) -> None:
+        """要求停止本輪工作（從 GUI 執行緒呼叫）。迴圈會在安全點檢查並收尾。"""
+        self.cancel_requested = True
+
+    @staticmethod
+    def _stopped_reply(text: str) -> str:
+        return (f"{text}\n\n" if text.strip() else "") + "⏹ 已由使用者停止"
 
     def clear_history(self) -> None:
         self.history.clear()
@@ -119,7 +133,10 @@ class Agent:
 
         consecutive_errors = 0  # 連續全錯輪次計數
 
-        for _ in range(MAX_TOOL_ROUNDS):
+        for _ in range(self.max_tool_rounds):
+            if self.cancel_requested:
+                return "", self._stopped_reply("")
+
             thinking_chunks: list[str] = []
             text_chunks:     list[str] = []
             func_calls: dict[str, dict] = {}
@@ -155,6 +172,13 @@ class Agent:
                     raise
 
             async for event in stream:
+                if self.cancel_requested:
+                    try:
+                        await stream.close()
+                    except Exception:
+                        pass
+                    break
+
                 etype = getattr(event, "type", "")
 
                 # ── 推理摘要（思考過程）────────────────
@@ -211,12 +235,17 @@ class Agent:
             text     = "".join(text_chunks)
             fc_list  = list(func_calls.values())
 
+            if self.cancel_requested:
+                return thinking, self._stopped_reply(text)
+
             if not fc_list:
                 return thinking, text
 
             # 執行工具，下一輪繼續
             all_errors = True
             for fc in fc_list:
+                if self.cancel_requested:
+                    return thinking, self._stopped_reply(text)
                 try:
                     raw  = fc["arguments"].strip()
                     args = json.loads(raw) if raw else {}
