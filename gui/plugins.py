@@ -78,13 +78,15 @@ class PluginsView(ctk.CTkFrame):
                 text_color="gray", font=ctk.CTkFont(size=12), anchor="w",
             ).grid(row=1, column=0, padx=16, pady=(0, 2), sticky="w")
 
-            skills  = plugin.get("skills", [])
-            servers = plugin.get("mcp_servers", [])
             parts = []
-            if skills:
-                parts.append("Skills: " + ", ".join(skills))
-            if servers:
-                parts.append("MCP: " + ", ".join(servers))
+            if plugin.get("skills"):
+                parts.append("Skills: " + ", ".join(plugin["skills"]))
+            if plugin.get("commands"):
+                parts.append("指令: " + ", ".join("/" + c for c in plugin["commands"]))
+            if plugin.get("subagents"):
+                parts.append("子代理: " + ", ".join(plugin["subagents"]))
+            if plugin.get("mcp_servers"):
+                parts.append("MCP: " + ", ".join(plugin["mcp_servers"]))
 
             ctk.CTkLabel(
                 card, text="　|　".join(parts) or "（空）",
@@ -125,9 +127,13 @@ class PluginsView(ctk.CTkFrame):
             return
 
         summary = f"已安裝 plugin「{info['name']}」"
-        if info["skills"]:
+        if info.get("skills"):
             summary += f"\nSkills：{'、'.join(info['skills'])}（立即生效）"
-        if info["mcp_servers"]:
+        if info.get("commands"):
+            summary += f"\n指令：{'、'.join('/' + c for c in info['commands'])}（立即生效）"
+        if info.get("subagents"):
+            summary += f"\n子代理：{'、'.join(info['subagents'])}（立即生效）"
+        if info.get("mcp_servers"):
             summary += (
                 f"\nMCP servers：{'、'.join(info['mcp_servers'])}"
                 "（重啟程式後生效）"

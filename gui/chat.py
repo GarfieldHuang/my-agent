@@ -931,6 +931,20 @@ class ChatView(ctk.CTkFrame):
             )
             return
 
+        # slash command：展開成提示詞模板；未知指令則提示
+        display_text = text
+        if text.startswith("/"):
+            from agent.commands import expand_command, get_command
+
+            expanded = expand_command(text)
+            if expanded is None:
+                name = text[1:].split(" ", 1)[0]
+                if get_command(name) is None:
+                    self._add_system(f"⚠ 找不到指令 /{name}（可到 Commands 頁管理）。")
+                    return
+            else:
+                text = expanded   # 送給模型的是展開後的內容
+
         self.input.delete(
             "1.0",
             "end",
@@ -942,8 +956,9 @@ class ChatView(ctk.CTkFrame):
         self.attach_bar.configure(text="")
         self._update_attachment_bar()
 
+        # 泡泡顯示使用者輸入的原文（/指令），實際送出的是展開內容
         self._add_bubble(
-            text,
+            display_text,
             "user",
         )
 

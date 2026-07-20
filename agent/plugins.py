@@ -23,6 +23,8 @@ log = logging.getLogger("my-agent")
 
 ROOT            = Path(__file__).resolve().parent.parent
 SKILLS_DIR      = ROOT / "skills"
+COMMANDS_DIR    = ROOT / "commands"
+AGENTS_DIR      = ROOT / "agents"
 MCP_CONFIG_PATH = ROOT / "mcp_config.yaml"
 REGISTRY_PATH   = Path.home() / ".my-agent" / "plugins.json"
 
@@ -125,11 +127,21 @@ def install_plugin_zip(zip_path: str | Path, overwrite: bool = False) -> dict:
                 md.parent for md in (tmp / "skills").glob("*/SKILL.md")
             ) if (tmp / "skills").is_dir() else []
 
+            command_files = sorted(
+                (tmp / "commands").glob("*.md")
+            ) if (tmp / "commands").is_dir() else []
+
+            agent_files = sorted(
+                (tmp / "agents").glob("*.md")
+            ) if (tmp / "agents").is_dir() else []
+
             mcp_file = tmp / "mcp.yaml"
             new_servers = _parse_plugin_mcp(mcp_file) if mcp_file.exists() else {}
 
-            if not skill_dirs and not new_servers:
-                raise ValueError("plugin 裡沒有任何 skill 或 MCP server 設定。")
+            if not (skill_dirs or command_files or agent_files or new_servers):
+                raise ValueError(
+                    "plugin 裡沒有任何 skill、command、subagent 或 MCP server。"
+                )
 
             # 衝突檢查
             registry   = _load_registry()
@@ -141,6 +153,12 @@ def install_plugin_zip(zip_path: str | Path, overwrite: bool = False) -> dict:
             for d in skill_dirs:
                 if (SKILLS_DIR / d.name).exists():
                     conflicts.append(f"skill「{d.name}」")
+            for f in command_files:
+                if (COMMANDS_DIR / f.name).exists():
+                    conflicts.append(f"command「{f.stem}」")
+            for f in agent_files:
+                if (AGENTS_DIR / f.name).exists():
+                    conflicts.append(f"subagent「{f.stem}」")
             for server_name in new_servers:
                 if server_name in mcp_config["servers"]:
                     conflicts.append(f"MCP server「{server_name}」")
@@ -162,6 +180,20 @@ def install_plugin_zip(zip_path: str | Path, overwrite: bool = False) -> dict:
                 shutil.copytree(d, target)
                 installed_skills.append(d.name)
 
+            # 就位：commands
+            installed_commands = []
+            for f in command_files:
+                COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, COMMANDS_DIR / f.name)
+                installed_commands.append(f.stem)
+
+            # 就位：subagents
+            installed_agents = []
+            for f in agent_files:
+                AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, AGENTS_DIR / f.name)
+                installed_agents.append(f.stem)
+
             # 就位：MCP servers
             for server_name, server_cfg in new_servers.items():
                 mcp_config["servers"][server_name] = server_cfg
@@ -174,15 +206,20 @@ def install_plugin_zip(zip_path: str | Path, overwrite: bool = False) -> dict:
                 "version":     version,
                 "description": description,
                 "skills":      installed_skills,
+                "commands":    installed_commands,
+                "subagents":   installed_agents,
                 "mcp_servers": list(new_servers),
             }
             _save_registry(registry)
 
-            log.info("plugin 已安裝：%s（%d skills, %d MCP servers）",
-                     name, len(installed_skills), len(new_servers))
+            log.info("plugin 已安裝：%s（%d skills, %d commands, %d agents, %d MCP）",
+                     name, len(installed_skills), len(installed_commands),
+                     len(installed_agents), len(new_servers))
 
             return {"name": name, "version": version,
                     "skills": installed_skills,
+                    "commands": installed_commands,
+                    "subagents": installed_agents,
                     "mcp_servers": list(new_servers)}
 
 
@@ -199,6 +236,12 @@ def uninstall_plugin(name: str) -> None:
         target = SKILLS_DIR / skill_name
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
+
+    for command_name in info.get("commands", []):
+        (COMMANDS_DIR / f"{command_name}.md").unlink(missing_ok=True)
+
+    for agent_name in info.get("subagents", []):
+        (AGENTS_DIR / f"{agent_name}.md").unlink(missing_ok=True)
 
     server_names = info.get("mcp_servers", [])
     if server_names:

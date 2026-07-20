@@ -24,8 +24,10 @@ from .doctools import DOC_TOOLS, call_doc_tool, is_doc_tool
 from .files import FileUploader
 from .imagegen import disable_model_param, image_tool, save_image_b64
 from .mcp_manager import MCPManager
+from .hooks import run_hooks
 from .shell import SHELL_TOOLS, call_shell_tool, is_shell_tool
 from .skills import call_skill_tool, is_skill_tool, skill_tools, skills_index_prompt
+from .subagents import get_subagent, is_subagent_tool, subagent_tools
 
 DEFAULT_MAX_TOOL_ROUNDS = 10
 
@@ -39,9 +41,11 @@ class Agent:
         system_prompt: str = "You are a helpful assistant.",
         reasoning_effort: str = "medium",   # none/low/medium/high/xhigh
         max_tool_rounds: int | None = None,  # 未指定時讀 MAX_TOOL_ROUNDS 環境變數
+        is_subagent: bool = False,           # 子代理不觸發 hooks、不能再開子代理
     ):
         self.client           = client
         self.mcp              = mcp
+        self._is_subagent     = is_subagent
         self.model            = model or os.getenv("OPENAI_MODEL", "gpt-5.4")
         self.system_prompt    = system_prompt
         self.reasoning_effort = reasoning_effort
@@ -84,6 +88,12 @@ class Agent:
         answer：最終回覆
         """
         self.cancel_requested = False
+
+        if not self._is_subagent:
+            await asyncio.to_thread(
+                run_hooks, "before_send", {"user_input": user_input}
+            )
+
         content = await self._build_content(user_input, attachments or [])
         self.history.append({"role": "user", "content": content})
 
@@ -97,6 +107,13 @@ class Agent:
             paths = "\n".join(f"📄 {p}" for p in self.last_files)
             reply = (f"{reply}\n\n" if reply.strip() else "") + f"檔案已產生：\n{paths}"
         self.history.append({"role": "assistant", "content": reply})
+
+        if not self._is_subagent:
+            await asyncio.to_thread(
+                run_hooks, "after_response",
+                {"user_input": user_input, "reply": reply},
+            )
+
         return thinking, reply
 
     def request_stop(self) -> None:
@@ -113,18 +130,54 @@ class Agent:
     # ── Core loop ─────────────────────────────────
 
     def _build_tools(self) -> list:
-        """MCP 工具 + hosted 生圖工具 + 本地文件工具 + skill 載入工具。"""
-        return (
+        """MCP 工具 + hosted 生圖工具 + 本地文件工具 + skill / subagent 工具。"""
+        tools = (
             list(self.mcp.openai_tools() or [])
             + [image_tool()]
             + DOC_TOOLS
             + SHELL_TOOLS
             + skill_tools()
         )
+        # 子代理不能再開子代理，避免無限遞迴
+        if not self._is_subagent:
+            tools += subagent_tools()
+        return tools
 
     def _instructions(self) -> str:
         """system prompt + skill 目錄（每輪重算，skill 可熱加）。"""
         return self.system_prompt + skills_index_prompt()
+
+    async def _run_subagent(self, args: dict) -> str:
+        """委派任務給子代理，回傳其最終回覆。"""
+        name = str(args.get("name", "")).strip()
+        task = str(args.get("task", "")).strip()
+
+        sa = get_subagent(name)
+        if sa is None:
+            from .subagents import list_subagents
+            available = "、".join(a["name"] for a in list_subagents()) or "（無）"
+            return f"[ERROR] 找不到子代理「{name}」。可用：{available}"
+        if not task:
+            return "[ERROR] 沒有提供交辦任務。"
+
+        sub = Agent(
+            client=self.client,
+            mcp=self.mcp,
+            model=sa["model"] or self.model,
+            system_prompt=sa["prompt"] or "You are a helpful assistant.",
+            reasoning_effort=sa["reasoning_effort"] or self.reasoning_effort,
+            max_tool_rounds=self.max_tool_rounds,
+            is_subagent=True,
+        )
+        log.info("SUBAGENT run %s task=%r", name, task[:80])
+
+        try:
+            _thinking, reply = await sub.chat(task)
+        except Exception as e:
+            log.exception("subagent 執行失敗")
+            return f"[ERROR] 子代理「{name}」執行失敗：{e}"
+
+        return f"【子代理 {name} 的結果】\n{reply}"
 
     async def _run_loop(self) -> tuple[str, str]:
         tools = self._build_tools()
@@ -257,8 +310,17 @@ class Agent:
                     raw  = fc["arguments"].strip()
                     args = json.loads(raw) if raw else {}
                     log.debug("TOOL calling %s args=%r", fc["name"], args)
+
+                    if not self._is_subagent:
+                        await asyncio.to_thread(
+                            run_hooks, "before_tool",
+                            {"tool_name": fc["name"], "tool_args": raw},
+                        )
+
                     if is_skill_tool(fc["name"]):
                         result = call_skill_tool(args)
+                    elif is_subagent_tool(fc["name"]):
+                        result = await self._run_subagent(args)
                     elif is_shell_tool(fc["name"]):
                         # 阻塞的 subprocess + 確認視窗等待 → 丟到 thread 跑
                         result = await asyncio.to_thread(
@@ -271,6 +333,12 @@ class Agent:
                     else:
                         result = await self.mcp.call(fc["name"], args)
                     log.debug("TOOL result=%r", result)
+
+                    if not self._is_subagent:
+                        await asyncio.to_thread(
+                            run_hooks, "after_tool",
+                            {"tool_name": fc["name"], "tool_result": result},
+                        )
                     if not result.startswith("Error:") and not result.startswith("[ERROR]"):
                         all_errors = False
                 except Exception as e:
