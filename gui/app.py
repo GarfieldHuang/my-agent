@@ -119,6 +119,7 @@ class App(DnDCTk):
             "chat": ASSET_DIR / "icon_chat.png",
             "mcp": ASSET_DIR / "icon_mcp.png",
             "skills": ASSET_DIR / "icon_file.png",
+            "plugins": ASSET_DIR / "icon_attach.png",
             "settings": ASSET_DIR / "icon_settings.png",
             "account": ASSET_DIR / "icon_account.png",
         }
@@ -159,9 +160,9 @@ class App(DnDCTk):
         sidebar.grid_propagate(False)
         sidebar.grid_columnconfigure(0, weight=1)
 
-        # 對話紀錄「列表」（row 9）占用剩餘垂直空間；
-        # row 8 是標題列，不能給 weight，否則放大視窗時標題格會被撐開。
-        sidebar.grid_rowconfigure(9, weight=1)
+        # 對話紀錄「列表」（row 10）占用剩餘垂直空間；
+        # row 9 是標題列，不能給 weight，否則放大視窗時標題格會被撐開。
+        sidebar.grid_rowconfigure(10, weight=1)
 
         # ── My Agent 標題 ─────────────────────────
         # 原本：
@@ -195,6 +196,7 @@ class App(DnDCTk):
             (" Chat", "chat"),
             (" MCP 工具", "mcp"),
             (" Skills", "skills"),
+            (" Plugins", "plugins"),
             (" 設定", "settings"),
             (" 帳號", "account"),
         ]
@@ -246,7 +248,7 @@ class App(DnDCTk):
         )
         
         separator.grid(
-            row=6,
+            row=7,
             column=0,
             padx=10,
             pady=(8, 4),
@@ -277,7 +279,7 @@ class App(DnDCTk):
             corner_radius=8,
             command=self.new_chat,
         ).grid(
-            row=7,
+            row=8,
             column=0,
             padx=10,
             pady=(16, 2),
@@ -302,7 +304,7 @@ class App(DnDCTk):
             anchor="w",
             compound="left",
         ).grid(
-            row=8,
+            row=9,
             column=0,
             padx=20,
             pady=(6, 0),
@@ -314,7 +316,7 @@ class App(DnDCTk):
             fg_color="transparent",
         )
         self._session_frame.grid(
-            row=9,
+            row=10,
             column=0,
             padx=4,
             pady=(2, 8),
@@ -342,6 +344,7 @@ class App(DnDCTk):
         from gui.chat import ChatView
         from gui.mcp import MCPView
         from gui.skills import SkillsView
+        from gui.plugins import PluginsView
         from gui.settings import SettingsView
         from gui.account import AccountView
 
@@ -349,6 +352,7 @@ class App(DnDCTk):
             "chat": ChatView(content, self),
             "mcp": MCPView(content, self),
             "skills": SkillsView(content, self),
+            "plugins": PluginsView(content, self),
             "settings": SettingsView(content, self),
             "account": AccountView(content, self),
         }
