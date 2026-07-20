@@ -68,17 +68,29 @@ class SettingsView(ctk.CTkFrame):
             text_color="gray", font=ctk.CTkFont(size=12),
         ).grid(row=0, column=1, padx=(8, 0))
 
+        # CLI 指令免確認
+        ctk.CTkLabel(card, text="CLI 指令", font=ctk.CTkFont(weight="bold")).grid(
+            row=3, column=0, padx=20, pady=(10, 6), sticky="w"
+        )
+        self.cli_auto_var = ctk.BooleanVar(value=False)
+        ctk.CTkSwitch(
+            card,
+            text="免確認直接執行（風險自負；關閉時每次執行前會先詢問）",
+            variable=self.cli_auto_var,
+            font=ctk.CTkFont(size=12),
+        ).grid(row=3, column=1, padx=20, pady=(10, 6), sticky="w")
+
         # 模型 / 推理強度改到 Chat 頁選擇
         ctk.CTkLabel(
             card,
             text="模型與推理強度請在 Chat 頁下方的選單選擇。",
             text_color="gray", font=ctk.CTkFont(size=12),
-        ).grid(row=3, column=1, padx=20, pady=(0, 6), sticky="w")
+        ).grid(row=4, column=1, padx=20, pady=(0, 6), sticky="w")
 
         # 儲存
         ctk.CTkButton(
             card, text="儲存", command=self._save, width=100
-        ).grid(row=4, column=1, padx=20, pady=(6, 20), sticky="e")
+        ).grid(row=5, column=1, padx=20, pady=(6, 20), sticky="e")
 
         self._load()
 
@@ -96,6 +108,8 @@ class SettingsView(ctk.CTkFrame):
         env_default = int(os.getenv("MAX_TOOL_ROUNDS", DEFAULT_MAX_TOOL_ROUNDS))
         self.tool_rounds_entry.delete(0, "end")
         self.tool_rounds_entry.insert(0, str(cfg.get("max_tool_rounds", env_default)))
+
+        self.cli_auto_var.set(bool(cfg.get("cli_auto_approve", False)))
 
     def _save(self):
         from tkinter import messagebox
@@ -123,9 +137,10 @@ class SettingsView(ctk.CTkFrame):
             return
 
         cfg = load_config()
-        cfg["system_prompt"]    = self.prompt_box.get("1.0", "end-1c").strip()
-        cfg["bubble_max_lines"] = bubble_lines
-        cfg["max_tool_rounds"]  = tool_rounds
+        cfg["system_prompt"]     = self.prompt_box.get("1.0", "end-1c").strip()
+        cfg["bubble_max_lines"]  = bubble_lines
+        cfg["max_tool_rounds"]   = tool_rounds
+        cfg["cli_auto_approve"]  = bool(self.cli_auto_var.get())
         save_config(cfg)
 
         if self.app.agent:

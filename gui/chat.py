@@ -2023,8 +2023,40 @@ class ChatView(ctk.CTkFrame):
             image=self.check_icon,
         )
 
+        # CLI 指令執行前的使用者確認
+        if self.app.agent:
+            self.app.agent.on_confirm = self._confirm_command
+
         # 登入完成後再抓一次即時模型列表（啟動時可能尚未登入）
         self._fetch_models_async()
+
+    def _confirm_command(self, command: str) -> bool:
+        """CLI 工具的確認回呼。從背景執行緒呼叫：
+        丟到主執行緒跳確認視窗，等使用者回答（最多 5 分鐘）。
+        設定「CLI 免確認」開啟時直接放行。"""
+
+        from agent.auth import load_config
+
+        if load_config().get("cli_auto_approve"):
+            return True
+
+        answer: dict = {}
+        done = threading.Event()
+
+        def ask():
+            from tkinter import messagebox
+
+            answer["ok"] = messagebox.askyesno(
+                "執行 CLI 指令",
+                f"Agent 想在你的電腦執行：\n\n{command}\n\n允許嗎？",
+                parent=self.app,
+            )
+            done.set()
+
+        self.after(0, ask)
+        done.wait(timeout=300)
+
+        return answer.get("ok", False)
 
     def on_show(self):
         self._sync_chat_options()

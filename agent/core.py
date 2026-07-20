@@ -1,4 +1,5 @@
 """Agent 主迴圈：Responses API + 反思推理能力。"""
+import asyncio
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ from .doctools import DOC_TOOLS, call_doc_tool, is_doc_tool
 from .files import FileUploader
 from .imagegen import disable_model_param, image_tool, save_image_b64
 from .mcp_manager import MCPManager
+from .shell import SHELL_TOOLS, call_shell_tool, is_shell_tool
 from .skills import call_skill_tool, is_skill_tool, skill_tools, skills_index_prompt
 
 DEFAULT_MAX_TOOL_ROUNDS = 10
@@ -55,6 +57,10 @@ class Agent:
         # 串流回呼：callable(kind, data)，kind ∈ round_start / thinking / text。
         # 從背景 asyncio thread 呼叫，GUI 端需自行轉回主執行緒。
         self.on_stream = None
+
+        # CLI 指令確認回呼：callable(command) -> bool。
+        # None 時不確認直接執行；GUI 會掛上跳確認視窗的實作。
+        self.on_confirm = None
 
     def _emit(self, kind: str, data: str = "") -> None:
         callback = self.on_stream
@@ -112,6 +118,7 @@ class Agent:
             list(self.mcp.openai_tools() or [])
             + [image_tool()]
             + DOC_TOOLS
+            + SHELL_TOOLS
             + skill_tools()
         )
 
@@ -252,6 +259,11 @@ class Agent:
                     log.debug("TOOL calling %s args=%r", fc["name"], args)
                     if is_skill_tool(fc["name"]):
                         result = call_skill_tool(args)
+                    elif is_shell_tool(fc["name"]):
+                        # 阻塞的 subprocess + 確認視窗等待 → 丟到 thread 跑
+                        result = await asyncio.to_thread(
+                            call_shell_tool, fc["name"], args, self.on_confirm
+                        )
                     elif is_doc_tool(fc["name"]):
                         result, fpath = call_doc_tool(fc["name"], args)
                         if fpath:
