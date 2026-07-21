@@ -118,9 +118,9 @@ class App(DnDCTk):
         nav_icon_files = {
             "chat": ASSET_DIR / "icon_chat.png",
             "mcp": ASSET_DIR / "icon_mcp.png",
-            "skills": ASSET_DIR / "icon_file.png",
-            "automation": ASSET_DIR / "icon_new_chat.png",
-            "plugins": ASSET_DIR / "icon_attach.png",
+            "skills": ASSET_DIR / "icon_skill.png",
+            "automation": ASSET_DIR / "icon_auto.png",
+            "plugins": ASSET_DIR / "icon_plugins.png",
             "settings": ASSET_DIR / "icon_settings.png",
             "account": ASSET_DIR / "icon_account.png",
         }
