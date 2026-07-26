@@ -100,12 +100,22 @@ class ChatView(ctk.CTkFrame):
             height=52,
             wrap="word",
         )
+        
         self.input.grid(
             row=0,
             column=0,
             padx=(8, 4),
             pady=8,
             sticky="ew",
+        )
+        
+        # 微軟倉頡 Ctrl 組合鍵中文標點修正
+        tk_text = self.input._textbox
+        
+        tk_text.bind(
+            "<Control-KeyPress>",
+            self._on_ctrl_ime_character,
+            add="+",
         )
 
         self.input.bind(
@@ -2077,3 +2087,29 @@ class ChatView(ctk.CTkFrame):
         self._sync_chat_options()
         self.input.focus_set()
         
+
+    """
+    修正微軟倉頡以 Ctrl 組合鍵輸入中文標點時，
+    Tk Text 因事件仍帶有 Control 狀態而不插入字元的問題。
+    """
+    def _on_ctrl_ime_character(self, event):
+        ime_punctuation = {
+            "，",
+            "。",
+            "、",
+            "；",
+        }
+    
+        if event.char in ime_punctuation:
+            event.widget.insert(
+                "insert",
+                event.char,
+            )
+    
+            # 已由程式手動插入，阻止 Text class binding 繼續處理，
+            # 避免其他環境中出現重複插入。
+            return "break"
+    
+        # char 為空的 VK_PROCESSKEY 事件，以及 Ctrl+C、Ctrl+V 等
+        # 其他快捷鍵，繼續交給原本處理流程。
+        return None
