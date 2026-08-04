@@ -1,6 +1,7 @@
 """主視窗：導覽列 + 背景 asyncio loop + 共用 agent 狀態。"""
 
 import asyncio
+import logging
 import queue
 import threading
 from pathlib import Path
@@ -22,6 +23,8 @@ ctk.set_default_color_theme("blue")
 
 from agent.paths import bundle_dir
 
+log = logging.getLogger("my-agent")
+
 BASE_DIR = bundle_dir() / "gui"
 ASSET_DIR = BASE_DIR / "assets"
 
@@ -38,7 +41,13 @@ class App(DnDCTk):
     def __init__(self):
         super().__init__()
 
+        # Tk 預設把回呼裡的例外印到 stderr。可攜版用 pythonw.exe 啟動，
+        # stderr 是 None，這些例外等於憑空消失；dev 模式也只進 console，
+        # 事後查不到。導進 log 檔，才不會出現「畫面沒反應但毫無線索」。
+        self.report_callback_exception = self._log_tk_exception
+
         self.title("My Agent")
+
         self.geometry("980x660")
         self.minsize(720, 480)
 
@@ -73,6 +82,19 @@ class App(DnDCTk):
         self._poll()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # ── 例外記錄 ──────────────────────────────────
+
+    def _log_tk_exception(self, exc_type, exc_value, exc_tb) -> None:
+        """把 Tk 回呼裡的未捕捉例外寫進 log 而不是丟掉。
+
+        這類例外最麻煩的地方是它會靜默中斷 after 排程鏈：某個回呼炸掉
+        之後就不會再排下一次，畫面停在半途卻沒有任何錯誤訊息。
+        """
+        log.error(
+            "Tk 回呼未捕捉例外",
+            exc_info=(exc_type, exc_value, exc_tb),
+        )
 
     # ── 圖片載入工具 ──────────────────────────────
 

@@ -1244,7 +1244,13 @@ class ChatView(ctk.CTkFrame):
             )
 
     def _poll(self, future, spinner):
-        self._drain_stream(spinner)
+        # 串流繪製失敗絕不能中斷輪詢：_poll 一旦拋出，下面的
+        # self.after 就排不到，迴圈直接死掉——agent 明明跑完了，
+        # 畫面卻永遠停在思考中，要重開程式從存檔讀回才看得到回覆。
+        try:
+            self._drain_stream(spinner)
+        except Exception:
+            log.exception("串流繪製失敗（已略過該批片段，繼續輪詢）")
 
         if future.done():
             if spinner.winfo_exists():
