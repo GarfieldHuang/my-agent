@@ -1,9 +1,13 @@
 """帳號頁面：登入狀態、OAuth 登入/登出。"""
+import logging
 import threading
 import customtkinter as ctk
 
 from pathlib import Path
 from PIL import Image
+
+log = logging.getLogger("my-agent")
+
 
 class AccountView(ctk.CTkFrame):
     
@@ -116,17 +120,50 @@ class AccountView(ctk.CTkFrame):
     def _login(self):
         self.login_btn.configure(state="disabled", text="登入中…")
         self.status_icon.configure(text="⏳")
-        self.status_label.configure(text="瀏覽器已開啟，請完成授權後回到此視窗…")
+        # 這裡還沒真的開瀏覽器——實際結果由 on_auth_url 回報後才更新。
+        # 先寫死「瀏覽器已開啟」的話，開不起來時使用者只會看到一句
+        # 與事實不符的提示，也拿不到可以自己貼的網址。
+        self.status_label.configure(
+            text="正在開啟瀏覽器…",
+            text_color="gray",
+        )
+
+        def _on_auth_url(url: str, opened: bool):
+            self.app.after(0, lambda: self._show_auth_url(url, opened))
 
         def _do():
             try:
                 from agent.auth import get_access_token
-                get_access_token()
+                get_access_token(on_auth_url=_on_auth_url)
                 self.app.after(0, self._on_login_ok)
             except Exception as e:
                 self.app.after(0, lambda: self.show_error(str(e)))
 
         threading.Thread(target=_do, daemon=True).start()
+
+    def _show_auth_url(self, url: str, opened: bool):
+        """瀏覽器開啟成功與否都告知，失敗時把網址交給使用者。"""
+        if opened:
+            self.status_label.configure(
+                text="瀏覽器已開啟，請完成授權後回到此視窗…",
+                text_color="gray",
+            )
+            return
+
+        self.status_icon.configure(text="⚠")
+        self.status_label.configure(
+            text=(
+                "無法自動開啟瀏覽器。\n"
+                "已複製授權網址到剪貼簿，請貼到瀏覽器完成登入："
+                f"\n{url}"
+            ),
+            text_color="orange",
+        )
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(url)
+        except Exception:
+            log.exception("複製授權網址到剪貼簿失敗")
 
     def _on_login_ok(self):
         self._refresh()

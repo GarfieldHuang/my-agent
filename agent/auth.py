@@ -5,8 +5,10 @@
 import base64
 import hashlib
 import json
+import logging
 import os
 import secrets
+import sys
 import threading
 import time
 import webbrowser
@@ -44,6 +46,8 @@ SCOPE        = "openid profile email offline_access"
 
 # ChatGPT 訂閱後端（走 Plus/Pro 配額，不需要 API 帳戶餘額）
 CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
+
+log = logging.getLogger("my-agent")
 
 KEYCHAIN_SERVICE = "my-agent"
 KEYCHAIN_KEY     = "openai-token"
@@ -135,8 +139,12 @@ def _try_refresh(token: dict, client_id: str) -> dict | None:
 
 # ── 瀏覽器 OAuth 流程 ─────────────────────────────
 
-def _browser_oauth(client_id: str) -> dict:
-    """開瀏覽器讓用戶用 ChatGPT 帳號授權，回傳 token dict。"""
+def _browser_oauth(client_id: str, on_auth_url=None) -> dict:
+    """開瀏覽器讓用戶用 ChatGPT 帳號授權，回傳 token dict。
+
+    on_auth_url：callable(url, opened) — 網址備妥後回報，讓 GUI 顯示
+    真實狀態；瀏覽器開不起來時使用者才拿得到網址可以自己貼。
+    """
     verifier, challenge = _pkce_pair()
     state = secrets.token_urlsafe(16)
 
@@ -166,12 +174,32 @@ def _browser_oauth(client_id: str) -> dict:
             "✓ 認證成功！請關閉此視窗回到終端機。</h1>"
         )
 
-    server = uvicorn.Server(uvicorn.Config(app, host="localhost", port=1455, log_level="error"))
+    # log_config=None 是必要的：uvicorn 預設的 log formatter 在初始化時
+    # 執行 sys.stdout.isatty()，而可攜版用 pythonw.exe 啟動時 sys.stdout
+    # 是 None，會拋 ValueError: Unable to configure formatter 'default'。
+    # 這行在開瀏覽器之前，炸掉的話瀏覽器根本沒機會開。
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="localhost", port=1455,
+        log_level="error", log_config=None,
+    ))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
 
-    # 嘗試開啟瀏覽器；在遠端/VPS 環境可能失敗
-    opened = webbrowser.open(auth_url)
+    # 嘗試開啟瀏覽器；在遠端/VPS 環境或瀏覽器關聯損壞時可能失敗
+    try:
+        opened = webbrowser.open(auth_url)
+    except Exception:
+        log.exception("開啟瀏覽器失敗")
+        opened = False
+
+    # 回報實際結果給呼叫端（GUI 用來顯示正確狀態與備用網址）。
+    # 沒有這個的話，GUI 只能在按下按鈕當下先樂觀地說「瀏覽器已開啟」，
+    # 開不起來時使用者完全不知道發生什麼事，也拿不到網址。
+    if on_auth_url is not None:
+        try:
+            on_auth_url(auth_url, opened)
+        except Exception:
+            log.exception("on_auth_url callback 失敗")
 
     if opened:
         print("\n[Auth] 瀏覽器已開啟，請用你的 ChatGPT 帳號（Plus/Pro）登入並授權…")
@@ -185,7 +213,10 @@ def _browser_oauth(client_id: str) -> dict:
         if "code" in bucket:
             server.should_exit = True
             break
-        if i == 15 and not opened:
+        # GUI（尤其可攜版的 pythonw.exe）沒有 stdin，input() 會直接拋
+        # 例外把整個登入流程炸掉。只有終端機模式才走手動貼上這條路；
+        # GUI 端靠 on_auth_url 拿到網址自己顯示。
+        if i == 15 and not opened and sys.stdin is not None:
             redirect_url = input(
                 "\n[Auth] 登入後請貼上瀏覽器跳轉的完整 redirect URL：\n> "
             ).strip()
@@ -213,8 +244,11 @@ def _browser_oauth(client_id: str) -> dict:
 
 # ── 主要 API ──────────────────────────────────────
 
-def get_access_token() -> str:
-    """取得有效 access token；必要時開瀏覽器重新登入。"""
+def get_access_token(on_auth_url=None) -> str:
+    """取得有效 access token；必要時開瀏覽器重新登入。
+
+    on_auth_url 會原樣傳給 _browser_oauth，只有真的要重新授權時才觸發。
+    """
     client_id = os.getenv("OPENAI_CLIENT_ID") or DEFAULT_CLIENT_ID
 
     token = _load_token()
@@ -227,7 +261,7 @@ def get_access_token() -> str:
         if refreshed:
             return refreshed["access_token"]
 
-    token = _browser_oauth(client_id)
+    token = _browser_oauth(client_id, on_auth_url)
     _save_token(token)
     print("[Auth] ✓ 登入成功！\n")
     return token["access_token"]
