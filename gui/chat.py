@@ -879,12 +879,14 @@ class ChatView(ctk.CTkFrame):
             )
             return
 
-        if text == pending["base"]:
+        base = pending["base"]
+
+        if text == base:
             # 組字內容未進入輸入框，手動補回
             log.debug(
                 "IME[rescue-insert] comp=%r base=%r cursor=%s",
                 pending["comp"],
-                pending["base"],
+                base,
                 self.input.index("insert"),
             )
 
@@ -895,6 +897,37 @@ class ChatView(ctk.CTkFrame):
 
             log.debug(
                 "IME[rescue-insert] after=%r",
+                self.input.get("1.0", "end-1c"),
+            )
+        elif (
+            len(text) < len(base)
+            and base.startswith(text)
+        ):
+            # 微軟注音會把游標前的字元一併吸進組字脈絡，
+            # 組字被丟棄時那些字元也跟著消失（例：'…python' 只剩 '…pytho'）。
+            # base 是組字期間記錄的完整原文，用它把尾巴連同組字一起補回。
+            #
+            # 只在 text 是 base 的前綴時才動作——這保證消失的字元都在
+            # 尾端（也就是組字發生的位置）。若是中間被改動，startswith
+            # 不成立，就維持原本不介入的行為。
+            missing = base[len(text):]
+
+            log.debug(
+                "IME[rescue-truncated] missing=%r comp=%r "
+                "base=%r text=%r",
+                missing,
+                pending["comp"],
+                base,
+                text,
+            )
+
+            self.input.insert(
+                f"1.0+{len(text)}c",
+                missing + pending["comp"],
+            )
+
+            log.debug(
+                "IME[rescue-truncated] after=%r",
                 self.input.get("1.0", "end-1c"),
             )
         else:
