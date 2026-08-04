@@ -718,7 +718,16 @@ class ChatView(ctk.CTkFrame):
 
         from gui.ime import get_composition
 
-        if not get_composition():
+        _comp_at_press = get_composition()
+
+        log.debug(
+            "IME[ctrl-space] comp=%r text=%r state=%r",
+            _comp_at_press,
+            self.input.get("1.0", "end-1c"),
+            self._ime_state,
+        )
+
+        if not _comp_at_press:
             snapshot = self.input.get(
                 "1.0",
                 "end-1c",
@@ -740,9 +749,22 @@ class ChatView(ctk.CTkFrame):
                 )
 
                 if index is not None:
+                    log.debug(
+                        "IME[watch-delete] try=%d index=%d "
+                        "removing=%r snapshot=%r now=%r",
+                        state["tries"],
+                        index,
+                        now[index],
+                        snapshot,
+                        now,
+                    )
                     self.input.delete(
                         f"1.0+{index}c",
                         f"1.0+{index + 1}c",
+                    )
+                    log.debug(
+                        "IME[watch-delete] after=%r",
+                        self.input.get("1.0", "end-1c"),
                     )
                     return
 
@@ -814,6 +836,12 @@ class ChatView(ctk.CTkFrame):
         )
 
         if composition:
+            if composition != state["comp"]:
+                log.debug(
+                    "IME[compose] comp=%r base=%r",
+                    composition,
+                    text,
+                )
             state.update(
                 comp=composition,
                 base=text,
@@ -823,6 +851,12 @@ class ChatView(ctk.CTkFrame):
 
         if state["comp"]:
             # 組字剛消失，等待正常文字提交
+            log.debug(
+                "IME[compose-end] comp=%r base=%r text-now=%r",
+                state["comp"],
+                state["base"],
+                text,
+            )
             state["pending"] = {
                 "comp": state["comp"],
                 "base": state["base"],
@@ -848,13 +882,20 @@ class ChatView(ctk.CTkFrame):
         if text == pending["base"]:
             # 組字內容未進入輸入框，手動補回
             log.debug(
-                "IME rescue insert comp=%r",
+                "IME[rescue-insert] comp=%r base=%r cursor=%s",
                 pending["comp"],
+                pending["base"],
+                self.input.index("insert"),
             )
 
             self.input.insert(
                 "insert",
                 pending["comp"],
+            )
+
+            log.debug(
+                "IME[rescue-insert] after=%r",
+                self.input.get("1.0", "end-1c"),
             )
         else:
             index = self._diff_single_space(
@@ -865,8 +906,14 @@ class ChatView(ctk.CTkFrame):
             if index is not None:
                 # 將誤插入的空白替換成組字內容
                 log.debug(
-                    "IME rescue replace-space comp=%r",
+                    "IME[replace-space] index=%d removing=%r "
+                    "comp=%r base=%r text=%r cursor=%s",
+                    index,
+                    text[index],
                     pending["comp"],
+                    pending["base"],
+                    text,
+                    self.input.index("insert"),
                 )
 
                 self.input.delete(
@@ -877,11 +924,17 @@ class ChatView(ctk.CTkFrame):
                     "insert",
                     pending["comp"],
                 )
+
+                log.debug(
+                    "IME[replace-space] after=%r",
+                    self.input.get("1.0", "end-1c"),
+                )
             else:
                 log.debug(
-                    "IME committed normally, "
-                    "text grew by %d chars",
-                    len(text) - len(pending["base"]),
+                    "IME[no-op] base=%r text=%r comp=%r",
+                    pending["base"],
+                    text,
+                    pending["comp"],
                 )
 
     @staticmethod
