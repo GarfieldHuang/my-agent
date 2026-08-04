@@ -930,6 +930,38 @@ class ChatView(ctk.CTkFrame):
                 "IME[rescue-truncated] after=%r",
                 self.input.get("1.0", "end-1c"),
             )
+        elif (
+            text.startswith(base)
+            and pending["comp"].startswith(text[len(base):])
+            and len(text) - len(base) < len(pending["comp"])
+        ):
+            # 注音對標點是立即 commit，其餘組字卻被丟棄，
+            # 於是只有開頭的標點留下（例：'，然後也要給我匯入' 只剩 '，'）。
+            # 已進去的部分正好是 comp 的前綴，補上剩下的即可。
+            #
+            # 正常整串 commit 時 text[len(base):] == comp，
+            # 算出來的 missing 為空，這個分支不會成立。
+            committed = text[len(base):]
+            missing = pending["comp"][len(committed):]
+
+            log.debug(
+                "IME[rescue-partial] committed=%r missing=%r "
+                "comp=%r base=%r",
+                committed,
+                missing,
+                pending["comp"],
+                base,
+            )
+
+            self.input.insert(
+                f"1.0+{len(text)}c",
+                missing,
+            )
+
+            log.debug(
+                "IME[rescue-partial] after=%r",
+                self.input.get("1.0", "end-1c"),
+            )
         else:
             index = self._diff_single_space(
                 pending["base"],
