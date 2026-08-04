@@ -7,11 +7,14 @@
 """
 import copy
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import yaml
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+from .paths import mcp_config_path, mcp_example_path
 
 try:
     from mcp.client.sse import sse_client
@@ -32,8 +35,8 @@ class ToolEntry:
 class MCPManager:
     """載入 mcp_config.yaml，建立所有 server 連線，提供統一工具查詢與執行介面。"""
 
-    def __init__(self, config_path: str = "mcp_config.yaml"):
-        self.config_path = config_path
+    def __init__(self, config_path: str | Path | None = None):
+        self.config_path = Path(config_path) if config_path else mcp_config_path()
         self._tools: dict[str, ToolEntry] = {}
         self._sessions: list[ClientSession] = []
         self._exit_stack_closers: list[Any] = []
@@ -97,8 +100,7 @@ class MCPManager:
     def _load_config(self) -> dict:
         # mcp_config.yaml 在 .gitignore 裡（含個人 server 設定）
         # 找不到時 fallback 到 example 檔（只有範例，servers 區段為空）
-        paths = [self.config_path, self.config_path.replace(".yaml", ".example.yaml")]
-        for path in paths:
+        for path in (self.config_path, mcp_example_path()):
             try:
                 with open(path, encoding="utf-8") as f:
                     return yaml.safe_load(f) or {}

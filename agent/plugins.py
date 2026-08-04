@@ -9,6 +9,9 @@ Plugin zip 結構：
 
 安裝紀錄存在 ~/.my-agent/plugins.json，移除時據此清掉
 所屬的 skill 資料夾與 MCP server 設定。
+
+安裝目標一律是 ~/.my-agent/ 而非程式目錄：打包成 exe 後
+程式目錄唯讀，而且會被下次更新整個覆蓋掉。
 """
 import json
 import logging
@@ -19,14 +22,25 @@ from pathlib import Path
 
 import yaml
 
+from .paths import bundle_dir, mcp_config_path, user_dir
+
 log = logging.getLogger("my-agent")
 
-ROOT            = Path(__file__).resolve().parent.parent
-SKILLS_DIR      = ROOT / "skills"
-COMMANDS_DIR    = ROOT / "commands"
-AGENTS_DIR      = ROOT / "agents"
-MCP_CONFIG_PATH = ROOT / "mcp_config.yaml"
-REGISTRY_PATH   = Path.home() / ".my-agent" / "plugins.json"
+# 安裝目標一律是使用者目錄：內建目錄打包後唯讀，
+# 且會被下次程式更新整個覆蓋掉。
+SKILLS_DIR      = user_dir() / "skills"
+COMMANDS_DIR    = user_dir() / "commands"
+AGENTS_DIR      = user_dir() / "agents"
+REGISTRY_PATH   = user_dir() / "plugins.json"
+
+# 衝突檢查要連內建的一起看，否則會裝出一個蓋不掉內建同名項目的鬼影。
+BUILTIN_SKILLS_DIR   = bundle_dir() / "skills"
+BUILTIN_COMMANDS_DIR = bundle_dir() / "commands"
+BUILTIN_AGENTS_DIR   = bundle_dir() / "agents"
+
+
+def _mcp_config_file() -> Path:
+    return mcp_config_path()
 
 
 # ── 安裝紀錄 ─────────────────────────────────────
@@ -60,8 +74,9 @@ def list_plugins() -> list[dict]:
 # ── MCP 設定合併 ─────────────────────────────────
 
 def _load_mcp_config() -> dict:
-    if MCP_CONFIG_PATH.exists():
-        data = yaml.safe_load(MCP_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    path = _mcp_config_file()
+    if path.exists():
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     else:
         data = {}
     data.setdefault("servers", {})
@@ -71,7 +86,9 @@ def _load_mcp_config() -> dict:
 
 
 def _save_mcp_config(data: dict) -> None:
-    MCP_CONFIG_PATH.write_text(
+    path = _mcp_config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
@@ -151,13 +168,13 @@ def install_plugin_zip(zip_path: str | Path, overwrite: bool = False) -> dict:
             if name in registry:
                 conflicts.append(f"plugin「{name}」已安裝")
             for d in skill_dirs:
-                if (SKILLS_DIR / d.name).exists():
+                if (SKILLS_DIR / d.name).exists() or (BUILTIN_SKILLS_DIR / d.name).exists():
                     conflicts.append(f"skill「{d.name}」")
             for f in command_files:
-                if (COMMANDS_DIR / f.name).exists():
+                if (COMMANDS_DIR / f.name).exists() or (BUILTIN_COMMANDS_DIR / f.name).exists():
                     conflicts.append(f"command「{f.stem}」")
             for f in agent_files:
-                if (AGENTS_DIR / f.name).exists():
+                if (AGENTS_DIR / f.name).exists() or (BUILTIN_AGENTS_DIR / f.name).exists():
                     conflicts.append(f"subagent「{f.stem}」")
             for server_name in new_servers:
                 if server_name in mcp_config["servers"]:
@@ -232,16 +249,22 @@ def uninstall_plugin(name: str) -> None:
     if info is None:
         raise KeyError(f"沒有安裝過 plugin「{name}」。")
 
+    # 舊版把 plugin 內容裝在 repo 目錄，兩處都清才不會留下孤兒。
+    legacy_root = Path(__file__).resolve().parent.parent
+
     for skill_name in info.get("skills", []):
-        target = SKILLS_DIR / skill_name
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
+        for base in (SKILLS_DIR, legacy_root / "skills"):
+            target = base / skill_name
+            if target.exists():
+                shutil.rmtree(target, ignore_errors=True)
 
     for command_name in info.get("commands", []):
-        (COMMANDS_DIR / f"{command_name}.md").unlink(missing_ok=True)
+        for base in (COMMANDS_DIR, legacy_root / "commands"):
+            (base / f"{command_name}.md").unlink(missing_ok=True)
 
     for agent_name in info.get("subagents", []):
-        (AGENTS_DIR / f"{agent_name}.md").unlink(missing_ok=True)
+        for base in (AGENTS_DIR, legacy_root / "agents"):
+            (base / f"{agent_name}.md").unlink(missing_ok=True)
 
     server_names = info.get("mcp_servers", [])
     if server_names:

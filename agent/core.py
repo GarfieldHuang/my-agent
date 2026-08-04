@@ -7,8 +7,12 @@ from pathlib import Path
 
 from openai import AsyncOpenAI, NOT_GIVEN
 
-# ── Log 檔設定（寫在執行目錄底下）────────────────
-_log_path = Path("agent.log")
+from .paths import is_frozen, user_dir
+
+# ── Log 檔設定 ────────────────────────────────────
+# 開發時寫在執行目錄；打包後寫 ~/.my-agent/，因為 exe 所在目錄
+# 未必可寫（共用磁碟、Program Files），而且 cwd 會隨捷徑而變。
+_log_path = user_dir() / "agent.log" if is_frozen() else Path("agent.log")
 
 logging.basicConfig(
     level=logging.DEBUG,

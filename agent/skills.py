@@ -4,8 +4,8 @@ Skill 是「操作手冊」而非可執行工具——一份 SKILL.md 教模型
 怎麼做某類任務（報告格式、SOP、公司術語等）。
 
 目錄結構（兩處都會掃描，同名時使用者目錄優先）：
-    <repo>/skills/<name>/SKILL.md          # 隨專案發佈
-    ~/.my-agent/skills/<name>/SKILL.md     # 使用者自訂
+    <bundle>/skills/<name>/SKILL.md        # 內建，隨程式發佈（唯讀）
+    ~/.my-agent/skills/<name>/SKILL.md     # 使用者自訂／匯入（可寫）
 
 SKILL.md 格式：
     ---
@@ -21,10 +21,12 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from .paths import bundle_dir, user_dir
+
 log = logging.getLogger("my-agent")
 
-REPO_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
-USER_SKILLS_DIR = Path.home() / ".my-agent" / "skills"
+REPO_SKILLS_DIR = bundle_dir() / "skills"    # 內建，隨程式發佈（唯讀）
+USER_SKILLS_DIR = user_dir() / "skills"      # 使用者自訂／匯入（可寫）
 
 
 # ── 解析 ─────────────────────────────────────────
@@ -141,7 +143,9 @@ def import_skill_zip(zip_path: str | Path, overwrite: bool = False) -> list[str]
                     name = meta.get("name") or zip_path.stem
                 else:
                     name = d.name
-                plans.append((d, REPO_SKILLS_DIR / name))
+                # 匯入一律進使用者目錄：內建目錄打包後唯讀，
+                # 且會被下次程式更新覆蓋掉。
+                plans.append((d, USER_SKILLS_DIR / name))
 
             conflicts = [t.name for _s, t in plans if t.exists()]
             if conflicts and not overwrite:

@@ -4,8 +4,10 @@ from pathlib import Path
 import yaml
 import customtkinter as ctk
 
-MCP_CONFIG = Path("mcp_config.yaml")          # 個人設定（.gitignore）
-MCP_EXAMPLE = Path("mcp_config.example.yaml") # 範本（已 commit）
+from agent.paths import mcp_config_path, mcp_example_path
+
+MCP_CONFIG = mcp_config_path()    # 個人設定（可寫，不 commit）
+MCP_EXAMPLE = mcp_example_path()  # 範本（隨程式發佈，唯讀）
 
 
 def _load_servers() -> dict:
@@ -21,6 +23,7 @@ def _save_servers(servers: dict):
     cfg = yaml.safe_load(MCP_CONFIG.read_text(encoding="utf-8")) if MCP_CONFIG.exists() else {}
     cfg = cfg or {}
     cfg["servers"] = servers
+    MCP_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     MCP_CONFIG.write_text(
         yaml.dump(cfg, allow_unicode=True, default_flow_style=False),
         encoding="utf-8"

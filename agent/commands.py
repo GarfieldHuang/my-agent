@@ -16,10 +16,12 @@ import logging
 import re
 from pathlib import Path
 
+from .paths import bundle_dir, user_dir
+
 log = logging.getLogger("my-agent")
 
-REPO_COMMANDS_DIR = Path(__file__).resolve().parent.parent / "commands"
-USER_COMMANDS_DIR = Path.home() / ".my-agent" / "commands"
+REPO_COMMANDS_DIR = bundle_dir() / "commands"    # 內建，隨程式發佈（唯讀）
+USER_COMMANDS_DIR = user_dir() / "commands"      # 使用者自訂／plugin 裝入（可寫）
 
 _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 

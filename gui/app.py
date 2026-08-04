@@ -17,10 +17,12 @@ ctk.set_default_color_theme("blue")
 
 
 # ── 圖片路徑設定 ──────────────────────────────────
-# 使用目前程式檔案所在位置建立 assets 絕對路徑，
-# 避免從不同工作目錄啟動程式時發生圖片找不到的問題。
+# 走 bundle_dir() 建立 assets 絕對路徑，避免從不同工作目錄啟動時
+# 找不到圖片；打包成 exe 後也能指到隨附的資源目錄。
 
-BASE_DIR = Path(__file__).resolve().parent
+from agent.paths import bundle_dir
+
+BASE_DIR = bundle_dir() / "gui"
 ASSET_DIR = BASE_DIR / "assets"
 
 
@@ -643,9 +645,7 @@ class App(DnDCTk):
 
                 client = get_openai_client()
 
-                mcp = MCPManager(
-                    "mcp_config.yaml"
-                )
+                mcp = MCPManager()
                 await mcp.start()
 
                 cfg = load_config()

@@ -13,7 +13,9 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
-load_dotenv()
+from agent.paths import env_path
+
+load_dotenv(env_path())
 
 
 # ── GUI 模式 ──────────────────────────────────────
@@ -42,7 +44,7 @@ async def _run_cli(system_prompt: str):
         console.print(f"[red]{e}[/red]")
         return
 
-    mcp = MCPManager(config_path="mcp_config.yaml")
+    mcp = MCPManager()
     console.print("[dim]啟動 MCP servers...[/dim]")
     await mcp.start()
 

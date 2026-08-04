@@ -9,6 +9,7 @@ from rich.rule import Rule
 from rich.text import Text
 
 from .auth import get_access_token, load_config, logout, save_config
+from .paths import mcp_config_path
 
 console = Console()
 
@@ -112,7 +113,7 @@ def _step_mcp() -> None:
     console.print()
     console.print("[dim]MCP 讓 agent 可以呼叫外部工具，例如讀寫檔案、查資料等。[/dim]\n")
 
-    mcp_path = Path("mcp_config.yaml")
+    mcp_path = mcp_config_path()
     cfg = yaml.safe_load(mcp_path.read_text(encoding="utf-8")) if mcp_path.exists() else {}
     servers: dict = cfg.get("servers") or {}
 
@@ -142,5 +143,6 @@ def _step_mcp() -> None:
             break
 
     cfg["servers"] = servers
+    mcp_path.parent.mkdir(parents=True, exist_ok=True)
     mcp_path.write_text(yaml.dump(cfg, allow_unicode=True, default_flow_style=False), encoding="utf-8")
     console.print("[green]✓ mcp_config.yaml 已更新[/green]\n")
