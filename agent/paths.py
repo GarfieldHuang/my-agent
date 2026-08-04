@@ -19,6 +19,24 @@ def is_frozen() -> bool:
     return getattr(sys, "frozen", False)
 
 
+def is_portable() -> bool:
+    """是否為可攜式發佈版（隨包附一份 Python，用 start.bat 啟動）。
+
+    靠發佈時放進根目錄的 PORTABLE 標記檔判斷——可攜版跑的是
+    一般 python.exe，沒有 sys.frozen 可以問。
+    """
+    return (Path(__file__).resolve().parent.parent / "PORTABLE").exists()
+
+
+def is_packaged() -> bool:
+    """是否為「發給使用者的成品」（PyInstaller 或可攜版皆算）。
+
+    成品的程式目錄視同唯讀：可能放在共用磁碟，而且升級時整包
+    替換，寫在裡面的東西會消失。
+    """
+    return is_frozen() or is_portable()
+
+
 def bundle_dir() -> Path:
     """唯讀隨附資源的根目錄（GUI 圖檔、內建 skills/commands/agents）。"""
     if is_frozen():
@@ -37,9 +55,9 @@ def mcp_config_path() -> Path:
     """可寫的 mcp_config.yaml。
 
     開發模式維持放在 repo 根目錄（已在 .gitignore），
-    打包後改放 user_dir()，避免寫進不可寫／會被升級覆蓋的程式目錄。
+    發佈版改放 user_dir()，避免寫進不可寫／會被升級覆蓋的程式目錄。
     """
-    if is_frozen():
+    if is_packaged():
         return user_dir() / "mcp_config.yaml"
     return bundle_dir() / "mcp_config.yaml"
 
@@ -50,7 +68,7 @@ def mcp_example_path() -> Path:
 
 
 def env_path() -> Path:
-    """.env 位置。打包後放 user_dir()，讓使用者改得到。"""
-    if is_frozen():
+    """.env 位置。發佈版放 user_dir()，讓使用者改得到。"""
+    if is_packaged():
         return user_dir() / ".env"
     return bundle_dir() / ".env"

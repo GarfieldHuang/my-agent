@@ -24,15 +24,13 @@
 
 不需要 Python、不需要系統管理員權限、安裝時不需要網路。
 
-1. 拿到 `MyAgent.zip`（約 46 MB）
+1. 拿到 `MyAgent-portable.zip`（約 92 MB）
 2. 解壓縮到任何自己的資料夾，例如「文件」底下
-3. 雙擊 **`MyAgent.exe`**
+3. 雙擊 **`start.bat`**
 
 第一次執行會自動開瀏覽器，用 ChatGPT 帳號登入並授權，之後啟動就直接進入。
 
 個人資料（token、設定、對話紀錄、安裝的 skills / plugins）一律放在 `C:\Users\<你的帳號>\.my-agent\`，程式資料夾本身不會被寫入 — 要升級時直接把整個資料夾換成新版即可，設定不會掉。
-
-> 若公司資安政策封鎖未簽章的執行檔（AppLocker / 軟體限制原則），`MyAgent.exe` 會開不起來，需請 IT 加白名單。
 
 ---
 
@@ -71,22 +69,50 @@ git -c http.sslbackend=openssl clone https://github.com/GarfieldHuang/my-agent.g
 
 ## 打包免安裝版發給同事
 
-裝好 venv 後，雙擊 **`build.bat`**（或在終端機執行），約 2–5 分鐘產出 `dist\MyAgent.zip`：
+有兩種打包方式。**預設用可攜版** — 除非確定目標環境沒有信譽式防毒。
+
+### 可攜版（建議）
+
+```bash
+venv\Scripts\python.exe build_portable.py
+```
+
+產出 `dist\MyAgent-portable.zip`（約 92 MB）。把它放到共用磁碟 / SharePoint，同事解壓後雙擊 `start.bat`。
+
+結構是「官方簽章的 `pythonw.exe` + 原始碼 + 預裝套件」：
+
+```
+MyAgent/
+├── start.bat     啟動器
+├── PORTABLE      給 agent/paths.py 認的標記檔（在 app/ 內）
+├── python/       CPython 複本（含 tkinter、tcl/tk）
+└── app/          原始碼與內建資源
+```
+
+**為什麼不用單一 exe** — PyInstaller 產出的 exe 沒有程式碼簽章，且每次 build 的 hash 都是新的，Symantec Endpoint Protection 之類的信譽式防毒會判為 `Unproven.LowPrevalence` 直接隔離。這不是誤判成惡意程式，是「這個檔案全球沒幾個人跑過」的信譽結論，所以**每次改版都會再中一次**。可攜版實際被執行的是 python.org 官方簽章、全球普及度極高的 `pythonw.exe`，完全繞開這個判定。
+
+用 `pythonw.exe` 而非 `python.exe` 是為了不跳黑窗；代價是 `sys.stdout` / `sys.stderr` 都是 `None`，未捕捉的例外會無聲消失（症狀：雙擊後完全沒反應）。要除錯時改用 `python\python.exe app\main.py` 就看得到錯誤。
+
+### PyInstaller 單一 exe
 
 ```bash
 build.bat
 ```
 
-把 zip 放到共用磁碟 / SharePoint / OneDrive，同事下載解壓後雙擊 `MyAgent.exe` 就能用。
+產出 `dist\MyAgent.zip`（約 46 MB），解壓後雙擊 `MyAgent.exe`。體積小一半、啟動是單一執行檔，但會踩上述的防毒信譽問題，只適合已加白名單或沒有信譽式防毒的環境。
 
-打包設定在 [`MyAgent.spec`](MyAgent.spec)，幾個刻意的選擇：
+設定在 [`MyAgent.spec`](MyAgent.spec)，幾個刻意的選擇：
 
-- **onedir 而非 onefile** — onefile 每次啟動都要解壓到 temp（慢），且防毒誤判率明顯較高
+- **onedir 而非 onefile** — onefile 每次啟動都要解壓到 temp（慢），且防毒誤判率更高
 - **關閉 UPX 壓縮** — UPX 是防毒誤判的大宗
-- **排除 playwright** — 它會拖進數百 MB 的瀏覽器 driver；瀏覽器 MCP 走外部 python 執行，不需要打包進去
+- **排除 playwright** — 它會拖進數百 MB 的瀏覽器 driver；瀏覽器 MCP 走外部 python 執行
 - **排除 `mcp.cli`** — 它需要 `typer`（不在 requirements 內），掃到會讓 build 直接失敗
 
-打包後的路徑規則見 [`agent/paths.py`](agent/paths.py)：`bundle_dir()` 是隨程式發佈的唯讀資源，`user_dir()`（`~/.my-agent/`）是所有可寫狀態。**新增會被寫入的檔案時請走 `user_dir()`**，否則打包後會寫進唯讀目錄，或在下次更新時被覆蓋。
+### 路徑規則（兩種打包都適用）
+
+見 [`agent/paths.py`](agent/paths.py)：`bundle_dir()` 是隨程式發佈的唯讀資源，`user_dir()`（`~/.my-agent/`）是所有可寫狀態，`is_packaged()` 同時涵蓋 PyInstaller 與可攜版。
+
+**新增會被寫入的檔案時請走 `user_dir()`**，否則打包後會寫進唯讀目錄，或在下次更新時被整包覆蓋。
 
 ---
 
@@ -190,7 +216,8 @@ my-agent/
 ├── browser_mcp.py       # 內建瀏覽器 MCP server
 ├── main.py              # 入口（GUI 預設，--cli 走終端機）
 ├── start.bat            # 開發模式啟動捷徑
-├── build.bat            # 打包免安裝版
+├── build_portable.py    # 打包可攜版（建議）
+├── build.bat            # 打包 PyInstaller 單一 exe
 ├── MyAgent.spec         # PyInstaller 設定
 ├── mcp_config.yaml      # MCP 設定（gitignore，不會被 commit）
 ├── requirements.txt

@@ -3,24 +3,32 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 from openai import AsyncOpenAI, NOT_GIVEN
 
-from .paths import is_frozen, user_dir
+from .paths import is_packaged, user_dir
 
 # ── Log 檔設定 ────────────────────────────────────
-# 開發時寫在執行目錄；打包後寫 ~/.my-agent/，因為 exe 所在目錄
+# 開發時寫在執行目錄；發佈版寫 ~/.my-agent/，因為程式所在目錄
 # 未必可寫（共用磁碟、Program Files），而且 cwd 會隨捷徑而變。
-_log_path = user_dir() / "agent.log" if is_frozen() else Path("agent.log")
+_log_path = user_dir() / "agent.log" if is_packaged() else Path("agent.log")
+
+_handlers: list[logging.Handler] = [
+    logging.FileHandler(_log_path, encoding="utf-8"),
+]
+
+# 可攜版用 pythonw.exe 啟動且無 console，此時 sys.stderr 是 None。
+# 無條件掛 StreamHandler 會讓第一筆 log 就 AttributeError 而整個程式
+# 靜默死掉（沒有 console 可以顯示錯誤，症狀是雙擊後完全沒反應）。
+if sys.stderr is not None:
+    _handlers.append(logging.StreamHandler())
 
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(_log_path, encoding="utf-8"),
-        logging.StreamHandler(),          # 同時印到 console
-    ],
+    handlers=_handlers,
 )
 log = logging.getLogger("my-agent")
 
