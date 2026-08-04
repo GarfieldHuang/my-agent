@@ -1,47 +1,113 @@
 # My Agent
 
-個人 AI Agent，用你的 **ChatGPT 帳號（Plus/Pro）直接登入**，不需要 API Key，不需要任何設定。
+個人 AI Agent 桌面應用，用你的 **ChatGPT 帳號（Plus/Pro）直接登入**，不需要 API Key。
+
+預設是圖形介面（GUI），也支援純終端機模式。
 
 ## 功能
 
-- **一鍵登入** — 執行後自動開瀏覽器，用 ChatGPT 帳號授權，token 存入 macOS Keychain
+- **一鍵登入** — 執行後自動開瀏覽器，用 ChatGPT 帳號授權，token 存入系統憑證管理員
+- **圖形介面** — Chat、MCP 工具、Skills、自動化、Plugins、設定、帳號 七個分頁
 - **MCP 工具掛載** — 設定任意 MCP server，tools 自動整合到 agent
-- **檔案上傳** — 圖片（vision）、PDF、程式碼，用 `/file` 指令附加
-- **對話記憶** — 同一 session 保留完整歷史，`/clear` 重置
+- **Skills** — Markdown 寫的技能手冊，模型按需載入
+- **Slash Commands / Subagents / Hooks** — 自訂指令、子代理、生命週期掛勾
+- **Plugins** — 一個 zip 打包安裝 skills + commands + agents + MCP servers
+- **檔案上傳** — 圖片（vision）、PDF、程式碼，可拖放或用 `/file` 指令
+- **文件生成** — 產出 Word / PowerPoint / Excel / PDF
+- **生圖** — `gpt-image-2`，走 ChatGPT 訂閱配額，支援圖生圖
+- **瀏覽器操作** — 內建 Python MCP server，用系統已裝的 Edge/Chrome，不需要 Node.js
+- **對話記憶** — 保留 session 歷史，`/clear` 重置
 
 ---
 
-## 安裝與啟動
+## 給一般使用者：免安裝版
 
-**前置需求：** Python 3.11+、ChatGPT Plus / Pro 訂閱
+不需要 Python、不需要系統管理員權限、安裝時不需要網路。
+
+1. 拿到 `MyAgent.zip`（約 46 MB）
+2. 解壓縮到任何自己的資料夾，例如「文件」底下
+3. 雙擊 **`MyAgent.exe`**
+
+第一次執行會自動開瀏覽器，用 ChatGPT 帳號登入並授權，之後啟動就直接進入。
+
+個人資料（token、設定、對話紀錄、安裝的 skills / plugins）一律放在 `C:\Users\<你的帳號>\.my-agent\`，程式資料夾本身不會被寫入 — 要升級時直接把整個資料夾換成新版即可，設定不會掉。
+
+> 若公司資安政策封鎖未簽章的執行檔（AppLocker / 軟體限制原則），`MyAgent.exe` 會開不起來，需請 IT 加白名單。
+
+---
+
+## 給開發者：從原始碼安裝
+
+**前置需求：** Python 3.11+、ChatGPT Plus / Pro 訂閱、Windows
+
+> 不需要系統管理員權限。以下步驟已在乾淨環境實測通過。
 
 ```bash
 git clone https://github.com/GarfieldHuang/my-agent.git
 cd my-agent
-pip install -r requirements.txt
-python main.py
+py -m venv venv
+venv\Scripts\python.exe -m pip install --upgrade pip
+venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-第一次執行會自動開啟瀏覽器 → 用你的 ChatGPT 帳號登入並授權 → 回到終端機開始使用。
+裝完後，之後每次啟動就雙擊 **`start.bat`**（它會用 `venv\Scripts\python.exe` 跑 `main.py`）。
 
-之後每次執行 `python main.py` 就直接進入對話，不需要再登入。
+第一次執行會自動開啟瀏覽器 → 用 ChatGPT 帳號登入並授權 → 回到程式開始使用。
+之後啟動就直接進入，不需要再登入。
+
+不需要另外跑 `playwright install`：瀏覽器工具直接用系統已安裝的 Edge / Chrome。
+
+### 公司網路裝不起來？
+
+若 `git clone` 出現 `schannel: ... CRYPT_E_NO_REVOCATION_CHECK`，是憑證撤銷檢查被公司 Proxy 擋掉。改用 openssl backend：
+
+```bash
+git -c http.sslbackend=openssl clone https://github.com/GarfieldHuang/my-agent.git
+```
+
+若連 GitHub 都連不到，改用網頁版 **Code → Download ZIP** 下載後解壓，再從 `py -m venv venv` 那步繼續。
 
 ---
 
-## 指令
+## 打包免安裝版發給同事
+
+裝好 venv 後，雙擊 **`build.bat`**（或在終端機執行），約 2–5 分鐘產出 `dist\MyAgent.zip`：
+
+```bash
+build.bat
+```
+
+把 zip 放到共用磁碟 / SharePoint / OneDrive，同事下載解壓後雙擊 `MyAgent.exe` 就能用。
+
+打包設定在 [`MyAgent.spec`](MyAgent.spec)，幾個刻意的選擇：
+
+- **onedir 而非 onefile** — onefile 每次啟動都要解壓到 temp（慢），且防毒誤判率明顯較高
+- **關閉 UPX 壓縮** — UPX 是防毒誤判的大宗
+- **排除 playwright** — 它會拖進數百 MB 的瀏覽器 driver；瀏覽器 MCP 走外部 python 執行，不需要打包進去
+- **排除 `mcp.cli`** — 它需要 `typer`（不在 requirements 內），掃到會讓 build 直接失敗
+
+打包後的路徑規則見 [`agent/paths.py`](agent/paths.py)：`bundle_dir()` 是隨程式發佈的唯讀資源，`user_dir()`（`~/.my-agent/`）是所有可寫狀態。**新增會被寫入的檔案時請走 `user_dir()`**，否則打包後會寫進唯讀目錄，或在下次更新時被覆蓋。
+
+---
+
+## 啟動方式
 
 | 命令 | 說明 |
 |------|------|
-| `python main.py` | 啟動 agent |
-| `python main.py setup` | 設定精靈（重新登入、換模型、設定 MCP 工具） |
-| `python main.py logout` | 登出（清除 Keychain token） |
-| `python main.py --system "..."` | 自訂 system prompt 啟動 |
+| `start.bat` | 啟動 GUI（推薦，雙擊即可） |
+| `venv\Scripts\python.exe main.py` | 同上，GUI 模式 |
+| `venv\Scripts\python.exe main.py --cli` | 終端機模式 |
+| `venv\Scripts\python.exe main.py --cli --system "..."` | 自訂 system prompt 啟動 |
+| `venv\Scripts\python.exe main.py setup` | 設定精靈（重新登入、換模型、設定 MCP 工具） |
+| `venv\Scripts\python.exe main.py logout` | 登出（清除已儲存的 token） |
+| `venv\Scripts\python.exe main.py image "描述"` | 命令列生圖 |
 
-### 對話中的斜線指令
+### CLI 模式的斜線指令
 
 | 指令 | 說明 |
 |------|------|
 | `/file <路徑>` | 附加檔案到下一則訊息 |
+| `/image <描述>` | 生圖（先 `/file` 附加圖片即為圖生圖） |
 | `/clear` | 清除對話歷史 |
 | `/logout` | 登出並離開 |
 | `/quit` | 離開 |
@@ -50,11 +116,13 @@ python main.py
 
 ## 設定 MCP 工具（可選）
 
+GUI 的「MCP 工具」分頁可直接新增設定，或用設定精靈：
+
 ```bash
-python main.py setup   # 選 ③ MCP 工具，用問答方式新增
+venv\Scripts\python.exe main.py setup   # 選 ③ MCP 工具
 ```
 
-或直接編輯 `mcp_config.yaml`：
+也可以直接編輯 `mcp_config.yaml`（沒有這個檔時會自動 fallback 到 `mcp_config.example.yaml`）：
 
 ```yaml
 servers:
@@ -68,12 +136,18 @@ servers:
   my-remote:
     transport: sse
     url: http://localhost:3001/sse
+
+  # 瀏覽器操作（純 Python，用系統已裝的 Edge/Chrome）
+  browser:
+    transport: stdio
+    command: python
+    args: ["browser_mcp.py"]
 ```
 
 ### 自動注入參數（inject）
 
 有些 MCP server 的工具需要傳入 `api_key` 或其他認證參數。
-直接設定 `inject`，agent 會自動帶入這些值，**模型不需要知道、也不會被問到**：
+設定 `inject` 後 agent 會自動帶入，**模型不需要知道、也不會被問到**：
 
 ```yaml
 servers:
@@ -94,16 +168,36 @@ servers:
 ```
 my-agent/
 ├── agent/
-│   ├── auth.py          # OpenAI OAuth PKCE 流程 + Keychain 儲存
-│   ├── wizard.py        # 互動式設定精靈
+│   ├── paths.py         # 唯讀 bundle 資源 vs 可寫使用者資料
+│   ├── auth.py          # OpenAI OAuth PKCE 流程 + token 儲存
+│   ├── core.py          # Agent loop
 │   ├── mcp_manager.py   # MCP server 管理
+│   ├── skills.py        # Skills 載入
+│   ├── commands.py      # Slash commands
+│   ├── subagents.py     # 子代理
+│   ├── hooks.py         # 生命週期掛勾
+│   ├── plugins.py       # Plugin 安裝／移除
+│   ├── sessions.py      # 對話 session
 │   ├── files.py         # 檔案上傳
-│   └── core.py          # Agent loop
-├── main.py              # CLI 入口
-├── mcp_config.yaml      # MCP 設定
+│   ├── doctools.py      # Word / PPT / Excel / PDF 生成
+│   ├── imagegen.py      # 生圖
+│   ├── shell.py         # run_command 工具
+│   └── wizard.py        # 互動式設定精靈
+├── gui/                 # customtkinter 圖形介面（各分頁）
+├── skills/              # 內建 skills
+├── commands/            # 內建 slash commands
+├── agents/              # 內建 subagents
+├── browser_mcp.py       # 內建瀏覽器 MCP server
+├── main.py              # 入口（GUI 預設，--cli 走終端機）
+├── start.bat            # 開發模式啟動捷徑
+├── build.bat            # 打包免安裝版
+├── MyAgent.spec         # PyInstaller 設定
+├── mcp_config.yaml      # MCP 設定（gitignore，不會被 commit）
 ├── requirements.txt
 └── .env.example         # 進階設定（一般使用者不需要）
 ```
+
+使用者資料放在 `~/.my-agent/`：token、`config.json`、`plugins.json`、`hooks.json`、`sessions/`、`agent.log`（打包版），以及使用者自訂或 plugin 裝入的 `skills/`、`commands/`、`agents/`。打包版的 `mcp_config.yaml` 和 `.env` 也在這裡。
 
 ---
 
@@ -111,18 +205,27 @@ my-agent/
 
 **Q: 想換帳號或 token 失效？**
 ```bash
-python main.py logout
-python main.py
+venv\Scripts\python.exe main.py logout
+start.bat
 ```
 
 **Q: 想換模型？**
-```bash
-python main.py setup
-```
+GUI 的「設定」分頁，或 `venv\Scripts\python.exe main.py setup`。
 
 **Q: 沒有 ChatGPT Plus/Pro，只有 API Key？**
 
-在 `.env` 加入：
+在 `.env` 加入（可從 `.env.example` 複製）：
 ```env
 OPENAI_API_KEY=sk-...
 ```
+
+**Q: 複雜任務（如瀏覽器操作）跑到一半就停？**
+
+工具呼叫輪數上限預設 10，在 `.env` 調高：
+```env
+MAX_TOOL_ROUNDS=25
+```
+
+**Q: token 存在哪裡？**
+
+優先存入系統憑證管理員（Windows Credential Manager / macOS Keychain），失敗時 fallback 到 `~/.my-agent/token.json`。
