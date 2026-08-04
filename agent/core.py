@@ -70,15 +70,20 @@ class Agent:
         self.last_images: list[Path] = []   # 本輪 chat 產生的圖片路徑（GUI 顯示用）
         self.last_files:  list[Path] = []   # 本輪 chat 產生的文件路徑（GUI 顯示用）
 
-        # 串流回呼：callable(kind, data)，kind ∈ round_start / thinking / text。
-        # 從背景 asyncio thread 呼叫，GUI 端需自行轉回主執行緒。
+        # 串流回呼：callable(kind, data)，從背景 asyncio thread 呼叫，
+        # GUI 端需自行轉回主執行緒。kind 與 data 的對應：
+        #   round_start  data=""                    工具呼叫後重跑，清掉上一輪暫定文字
+        #   thinking     data=推理片段（str）
+        #   text         data=回覆片段（str）
+        #   tool_start   data={call_id, name, arguments}
+        #   tool_done    data={call_id, name, result, ok}
         self.on_stream = None
 
         # CLI 指令確認回呼：callable(command) -> bool。
         # None 時不確認直接執行；GUI 會掛上跳確認視窗的實作。
         self.on_confirm = None
 
-    def _emit(self, kind: str, data: str = "") -> None:
+    def _emit(self, kind: str, data="") -> None:
         callback = self.on_stream
         if callback is None:
             return
@@ -318,6 +323,12 @@ class Agent:
             for fc in fc_list:
                 if self.cancel_requested:
                     return thinking, self._stopped_reply(text)
+                self._emit("tool_start", {
+                    "call_id":   fc["call_id"],
+                    "name":      fc["name"],
+                    "arguments": fc["arguments"],
+                })
+
                 try:
                     raw  = fc["arguments"].strip()
                     args = json.loads(raw) if raw else {}
@@ -356,6 +367,16 @@ class Agent:
                 except Exception as e:
                     log.error("TOOL error %s: %s", type(e).__name__, e)
                     result = f"[ERROR] {e}"
+
+                self._emit("tool_done", {
+                    "call_id": fc["call_id"],
+                    "name":    fc["name"],
+                    "result":  result,
+                    "ok": not (
+                        result.startswith("Error:")
+                        or result.startswith("[ERROR]")
+                    ),
+                })
 
                 input_items.append({
                     "type":      "function_call",

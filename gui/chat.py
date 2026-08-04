@@ -1,9 +1,11 @@
 """聊天介面：訊息泡泡、推理展開區塊、輸入欄、附加檔案。"""
 
+import json
 import logging
 import queue
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 import customtkinter as ctk
 from PIL import Image
 from tkinterdnd2 import DND_FILES
@@ -1107,6 +1109,9 @@ class ChatView(ctk.CTkFrame):
         self._stream_q: queue.Queue = queue.Queue()
         self._stream_row = None
         self._stream_box = None
+        self._think_panel = None          # 本輪即時推理區塊
+        self._streamed_thinking = False   # 已即時顯示過，結束時不再補一份
+        self._tool_panels: dict = {}      # call_id -> 可折疊區塊把手
         self.app.agent.on_stream = (
             lambda kind, data: self._stream_q.put((kind, data))
         )
@@ -1146,6 +1151,35 @@ class ChatView(ctk.CTkFrame):
             hover_color=getattr(self, "_send_btn_hover", None) or ["#36719F", "#144870"],
         )
 
+    # 工具內容可能很長（整份檔案、查詢結果），全塞進畫面會讓
+    # Tk 變慢又沒人看得完，超過就截斷並標示原始長度。
+    _TOOL_TEXT_LIMIT = 2000
+
+    @classmethod
+    def _truncate_tool_text(cls, text: str) -> str:
+        text = str(text)
+        if len(text) <= cls._TOOL_TEXT_LIMIT:
+            return text
+        return (
+            text[:cls._TOOL_TEXT_LIMIT]
+            + f"\n\n…（省略，共 {len(text)} 字）"
+        )
+
+    @classmethod
+    def _format_tool_args(cls, raw: str) -> str:
+        """把工具參數排版成好讀的樣子；不是 JSON 就原樣顯示。"""
+        raw = (raw or "").strip()
+        if not raw:
+            return "（無參數）"
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return cls._truncate_tool_text(raw)
+
+        return cls._truncate_tool_text(
+            json.dumps(parsed, ensure_ascii=False, indent=2)
+        )
+
     def _drain_stream(self, spinner):
         """把背景送來的串流片段畫到即時泡泡上。"""
 
@@ -1156,16 +1190,73 @@ class ChatView(ctk.CTkFrame):
                 kind, data = self._stream_q.get_nowait()
 
                 if kind == "round_start":
-                    # 工具呼叫後重跑：清掉上一輪的暫定文字
+                    # 工具呼叫後重跑：清掉上一輪的暫定文字，
+                    # 推理與工具區塊保留（那是本次任務的完整軌跡）
                     if self._stream_box is not None:
                         self._stream_box.configure(state="normal")
                         self._stream_box.delete("1.0", "end")
                         self._stream_box.configure(state="disabled")
+                    self._think_panel = None
+
+                elif kind == "thinking":
+                    # 推理片段即時顯示。沒有這段時，遇到長推理或連續
+                    # 工具呼叫，畫面會一直停在 spinner 完全沒有反應。
+                    if self._think_panel is None:
+                        if spinner.winfo_exists():
+                            spinner.destroy()
+                        self._think_panel = self._add_collapsible(
+                            "思考中…",
+                            expanded=True,
+                            max_lines=10,
+                        )
+                        self._streamed_thinking = True
+
+                    self._think_panel.append(data)
+
+                elif kind == "tool_start":
+                    if spinner.winfo_exists():
+                        spinner.destroy()
+
+                    # 推理告一段落，收起來讓出版面給工具
+                    if self._think_panel is not None:
+                        self._think_panel.set_title("思考過程")
+                        self._think_panel.collapse()
+                        self._think_panel = None
+
+                    panel = self._add_collapsible(
+                        f"⚙  {data['name']}  執行中…",
+                        max_lines=14,
+                    )
+                    panel.append(
+                        self._format_tool_args(data.get("arguments", ""))
+                    )
+                    panel.tool_name = data["name"]
+                    self._tool_panels[data["call_id"]] = panel
+
+                elif kind == "tool_done":
+                    panel = self._tool_panels.pop(
+                        data["call_id"],
+                        None,
+                    )
+                    if panel is not None:
+                        mark = "✓" if data.get("ok") else "✕"
+                        panel.set_title(f"⚙  {data['name']}  {mark}")
+                        panel.append(
+                            "\n\n── 結果 ──\n"
+                            + self._truncate_tool_text(data.get("result", ""))
+                        )
 
                 elif kind == "text":
                     if self._stream_box is None:
                         if spinner.winfo_exists():
                             spinner.destroy()
+
+                        # 正式回覆開始，把推理收起來
+                        if self._think_panel is not None:
+                            self._think_panel.set_title("思考過程")
+                            self._think_panel.collapse()
+                            self._think_panel = None
+
                         self._stream_row, self._stream_box = (
                             self._add_stream_bubble()
                         )
@@ -1174,8 +1265,6 @@ class ChatView(ctk.CTkFrame):
                     self._stream_box.insert("end", data)
                     self._stream_box.configure(state="disabled")
                     got_text = True
-
-                # kind == "thinking"：維持 spinner 顯示即可
 
         except queue.Empty:
             pass
@@ -1197,10 +1286,23 @@ class ChatView(ctk.CTkFrame):
 
             self.app.agent.on_stream = None
 
+            # 以下收尾必須在取結果之前做：future.result() 可能拋例外，
+            # 放進 try 裡的話出錯時區塊會永遠停在「思考中…／執行中…」
+            if self._think_panel is not None:
+                self._think_panel.set_title("思考過程")
+                self._think_panel.collapse()
+                self._think_panel = None
+
+            # 中途被停止或出錯時工具不會收到 tool_done
+            for panel in self._tool_panels.values():
+                panel.set_title(f"⚙  {panel.tool_name}  ⏹ 已中斷")
+            self._tool_panels.clear()
+
             try:
                 thinking, reply = future.result()
 
-                if thinking:
+                # 已經即時顯示過就不再補一份，否則會出現兩塊思考過程
+                if thinking and not self._streamed_thinking:
                     self._add_reasoning(
                         thinking,
                         before=self._stream_row,
@@ -1581,9 +1683,29 @@ class ChatView(ctk.CTkFrame):
     # ─────────────────────────────────────────────
 
     def _add_reasoning(self, thinking: str, before=None):
+        """可展開或收合的推理過程區塊（一次給完內容）。"""
+
+        panel = self._add_collapsible(
+            "思考過程",
+            before=before,
+        )
+        panel.append(thinking)
+        return panel
+
+    def _add_collapsible(
+        self,
+        title: str,
+        before=None,
+        expanded: bool = False,
+        max_lines: int = 12,
+    ):
         """
-        可展開或收合的推理過程區塊。
-        before：指定要插在哪個元件之前（串流泡泡完成後補在其上方）。
+        可展開或收合的內容區塊，回傳可持續追加內容的把手。
+
+        把手提供 append(text) / set_title(text) / expand() / collapse()，
+        讓串流中的推理與工具呼叫可以邊跑邊長內容。
+
+        before：指定插在哪個元件之前（串流泡泡完成後補在其上方）。
         """
 
         container = ctk.CTkFrame(
@@ -1603,7 +1725,7 @@ class ChatView(ctk.CTkFrame):
 
         toggle_button = ctk.CTkButton(
             container,
-            text="▶  思考過程",
+            text=f"▶  {title}",
             fg_color="transparent",
             text_color="gray",
             hover_color=(
@@ -1656,11 +1778,6 @@ class ChatView(ctk.CTkFrame):
             activate_scrollbars=True,
         )
 
-        textbox.insert(
-            "1.0",
-            thinking,
-        )
-
         textbox.configure(
             state="disabled",
         )
@@ -1677,38 +1794,74 @@ class ChatView(ctk.CTkFrame):
         self._bind_outer_scroll(panel)
         self._bind_outer_scroll(toggle_button)
 
-        shown = [False]
+        state = {
+            "shown": False,
+            "title": title,
+        }
+
+        def _refresh_arrow():
+            arrow = "▼" if state["shown"] else "▶"
+            toggle_button.configure(
+                text=f"{arrow}  {state['title']}",
+            )
+
+        def collapse():
+            if not state["shown"]:
+                return
+            panel.pack_forget()
+            state["shown"] = False
+            _refresh_arrow()
+
+        def expand():
+            if state["shown"]:
+                return
+            panel.pack(
+                fill="x",
+                padx=4,
+                pady=(2, 4),
+            )
+            state["shown"] = True
+            _refresh_arrow()
+
+            # 首次展開後才知道實際寬度，依顯示行數調高度
+            self._fit_textbox_height(textbox, max_lines=max_lines)
+            self._scroll_bottom()
 
         def toggle():
-            if shown[0]:
-                panel.pack_forget()
+            collapse() if state["shown"] else expand()
 
-                toggle_button.configure(
-                    text="▶  思考過程",
-                )
-            else:
-                panel.pack(
-                    fill="x",
-                    padx=4,
-                    pady=(2, 4),
-                )
+        def append(chunk: str):
+            """追加內容；展開中則同步長高並跟著捲到底。"""
+            if not chunk or not textbox.winfo_exists():
+                return
+            textbox.configure(state="normal")
+            textbox.insert("end", chunk)
+            textbox.configure(state="disabled")
+            if state["shown"]:
+                self._fit_textbox_height(textbox, max_lines=max_lines)
+                textbox.see("end")
 
-                toggle_button.configure(
-                    text="▼  思考過程",
-                )
-
-                # 首次展開後才知道實際寬度，依顯示行數調高度
-                self._fit_textbox_height(textbox, max_lines=12)
-
-                self._scroll_bottom()
-
-            shown[0] = not shown[0]
+        def set_title(new_title: str):
+            state["title"] = new_title
+            _refresh_arrow()
 
         toggle_button.configure(
             command=toggle,
         )
 
+        if expanded:
+            expand()
+
         self._scroll_bottom()
+
+        return SimpleNamespace(
+            container=container,
+            textbox=textbox,
+            append=append,
+            set_title=set_title,
+            expand=expand,
+            collapse=collapse,
+        )
 
     # ─────────────────────────────────────────────
     # 圖片
