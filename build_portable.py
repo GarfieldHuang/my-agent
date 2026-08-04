@@ -52,8 +52,20 @@ REM `start ""` detaches, letting this cmd window close immediately.
 REM
 REM ASCII-only on purpose: cmd.exe parses .bat with the OEM codepage
 REM (Big5 on zh-TW), which mangles UTF-8 Chinese into garbage commands.
+setlocal
 cd /d "%~dp0"
+
+REM Isolate from whatever Python the user already has. Without this the
+REM bundled interpreter still picks up %APPDATA%\\Python\\PythonXY\\site-packages
+REM and %PYTHONPATH%, so a colleague with a different uvicorn or httpx
+REM installed gets different behaviour from what we shipped and tested.
+REM PYTHONHOME would be worse still: it repoints at another installation.
+set PYTHONNOUSERSITE=1
+set PYTHONPATH=
+set PYTHONHOME=
+
 start "" "%~dp0python\\pythonw.exe" "%~dp0app\\main.py" %*
+endlocal
 """
 
 
