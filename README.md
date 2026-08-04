@@ -246,6 +246,14 @@ GUI 的「設定」分頁，或 `venv\Scripts\python.exe main.py setup`。
 OPENAI_API_KEY=sk-...
 ```
 
+**Q: 要看詳細的執行紀錄？**
+
+log 預設是 INFO。追查問題時在 `.env` 開 DEBUG：
+```env
+MY_AGENT_LOG_LEVEL=DEBUG
+```
+`httpx` / `httpcore` / `openai` 等第三方套件無論如何都壓在 WARNING — 它們在 DEBUG 會把含 OAuth token 與 cookie 的完整 HTTP 標頭寫進 `agent.log`，等於在機器上留下一份憑證明文副本。
+
 **Q: 複雜任務（如瀏覽器操作）跑到一半就停？**
 
 工具呼叫輪數上限預設 10，在 `.env` 調高：

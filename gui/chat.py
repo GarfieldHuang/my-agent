@@ -722,13 +722,6 @@ class ChatView(ctk.CTkFrame):
 
         _comp_at_press = get_composition()
 
-        log.debug(
-            "IME[ctrl-space] comp=%r text=%r state=%r",
-            _comp_at_press,
-            self.input.get("1.0", "end-1c"),
-            self._ime_state,
-        )
-
         if not _comp_at_press:
             snapshot = self.input.get(
                 "1.0",
@@ -763,10 +756,6 @@ class ChatView(ctk.CTkFrame):
                     self.input.delete(
                         f"1.0+{index}c",
                         f"1.0+{index + 1}c",
-                    )
-                    log.debug(
-                        "IME[watch-delete] after=%r",
-                        self.input.get("1.0", "end-1c"),
                     )
                     return
 
@@ -838,12 +827,8 @@ class ChatView(ctk.CTkFrame):
         )
 
         if composition:
-            if composition != state["comp"]:
-                log.debug(
-                    "IME[compose] comp=%r base=%r",
-                    composition,
-                    text,
-                )
+            # 組字過程每按一鍵就變動一次，記錄它只會洗版；
+            # 真正有診斷價值的是 compose-end 與三條救援分支。
             state.update(
                 comp=composition,
                 base=text,
@@ -897,10 +882,6 @@ class ChatView(ctk.CTkFrame):
                 pending["comp"],
             )
 
-            log.debug(
-                "IME[rescue-insert] after=%r",
-                self.input.get("1.0", "end-1c"),
-            )
         elif (
             len(text) < len(base)
             and base.startswith(text)
@@ -928,10 +909,6 @@ class ChatView(ctk.CTkFrame):
                 missing + pending["comp"],
             )
 
-            log.debug(
-                "IME[rescue-truncated] after=%r",
-                self.input.get("1.0", "end-1c"),
-            )
         elif (
             text.startswith(base)
             and pending["comp"].startswith(text[len(base):])
@@ -960,10 +937,6 @@ class ChatView(ctk.CTkFrame):
                 missing,
             )
 
-            log.debug(
-                "IME[rescue-partial] after=%r",
-                self.input.get("1.0", "end-1c"),
-            )
         else:
             index = self._diff_single_space(
                 pending["base"],
@@ -990,11 +963,6 @@ class ChatView(ctk.CTkFrame):
                 self.input.insert(
                     "insert",
                     pending["comp"],
-                )
-
-                log.debug(
-                    "IME[replace-space] after=%r",
-                    self.input.get("1.0", "end-1c"),
                 )
             else:
                 log.debug(

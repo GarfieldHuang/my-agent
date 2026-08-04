@@ -25,11 +25,31 @@ _handlers: list[logging.Handler] = [
 if sys.stderr is not None:
     _handlers.append(logging.StreamHandler())
 
+# 預設 INFO。要深入追查時設環境變數 MY_AGENT_LOG_LEVEL=DEBUG，
+# 不要把 DEBUG 當成預設發佈出去（理由見下方第三方 logger 的說明）。
+_LOG_LEVEL = os.getenv("MY_AGENT_LOG_LEVEL", "INFO").upper()
+
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=getattr(logging, _LOG_LEVEL, logging.INFO),
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=_handlers,
 )
+
+# 這些套件在 DEBUG 會把完整的 HTTP 標頭與回應主體寫進 log，
+# 其中包含 OAuth token 與 session cookie——等於在每台機器上留下
+# 一份使用者憑證的明文副本。無論主層級設多低都壓到 WARNING。
+# PIL 則是每讀一張圖就吐十幾行 PNG chunk，純粹是雜訊。
+for _noisy in (
+    "httpx",
+    "httpcore",
+    "openai",
+    "PIL",
+    "urllib3",
+    "asyncio",
+    "keyring",
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 log = logging.getLogger("my-agent")
 
 from .doctools import DOC_TOOLS, call_doc_tool, is_doc_tool
