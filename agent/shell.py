@@ -5,6 +5,7 @@
 - 逾時強制終止（預設 60 秒）
 - 輸出截斷，避免灌爆 context
 """
+import locale
 import logging
 import subprocess
 import sys
@@ -12,6 +13,48 @@ import sys
 log = logging.getLogger("my-agent")
 
 MAX_OUTPUT = 8000
+
+
+def _decode_candidates() -> list[str]:
+    """子行程輸出的候選編碼，依序嘗試。
+
+    Windows 上沒有單一正確答案：`type` 一個 UTF-8 檔案吐的是 UTF-8，
+    但 dir、ping 這些內建指令吐的是主控台的 OEM 碼頁（正體中文為
+    cp950）。先試 UTF-8 是因為誤判風險低——中文的 cp950 位元組序列
+    多半不是合法的 UTF-8，會解碼失敗而落到下一個候選。
+    """
+    candidates = ["utf-8-sig"]   # 同時吃掉 BOM 與無 BOM 的 UTF-8
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            candidates.append(f"cp{kernel32.GetOEMCP()}")   # 主控台
+            candidates.append(f"cp{kernel32.GetACP()}")     # 系統 ANSI
+        except Exception:
+            pass
+
+    candidates.append(locale.getpreferredencoding(False))
+
+    seen, ordered = set(), []
+    for enc in candidates:
+        key = (enc or "").lower()
+        if key and key not in seen:
+            seen.add(key)
+            ordered.append(enc)
+    return ordered
+
+
+def _decode(raw: bytes) -> str:
+    """把子行程輸出解成文字；全部失敗才用替代字元硬解。"""
+    if not raw:
+        return ""
+    for enc in _decode_candidates():
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 SHELL_TOOLS = [
     {
@@ -87,18 +130,18 @@ def call_shell_tool(name: str, args: dict, confirm=None) -> str:
             cwd=args.get("cwd") or None,
             timeout=timeout,
             capture_output=True,
-            text=True,
-            errors="replace",
             creationflags=creationflags,
-        )
+        )   # 不用 text=True：那會以系統預設編碼解碼（正體中文 Windows
+            # 是 cp950），讀 UTF-8 檔案就整片變亂碼。改拿 bytes 自己判。
     except subprocess.TimeoutExpired:
         return f"[ERROR] 指令逾時（{timeout} 秒），已強制終止。"
     except Exception as e:
         return f"[ERROR] {e}"
 
-    output = (proc.stdout or "")
-    if proc.stderr:
-        output += ("\n[stderr]\n" + proc.stderr)
+    output = _decode(proc.stdout)
+    stderr = _decode(proc.stderr)
+    if stderr:
+        output += ("\n[stderr]\n" + stderr)
     output = output.strip() or "(沒有輸出)"
 
     if len(output) > MAX_OUTPUT:
