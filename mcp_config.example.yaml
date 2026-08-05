@@ -29,13 +29,7 @@ servers:
 
   # 瀏覽器操作（純 Python，用系統已裝的 Edge/Chrome，不需要 Node.js）
   # 進階：設 BROWSER_CDP_URL 可連既有瀏覽器保留登入狀態，見 browser_mcp.py 註解
-  #
-  # 注意：MCP 只把 12 個白名單變數（PATH、TEMP…）傳給子行程，
-  # .env 裡的自訂變數不會被繼承。要給 server 的設定一律寫在下面的
-  # env 區段，例如 BROWSER_MAX_TEXT（頁面內容上限，預設 6000）。
   # browser:
   #   transport: stdio
   #   command: python
   #   args: ["browser_mcp.py"]
-  #   env:
-  #     BROWSER_MAX_TEXT: "20000"

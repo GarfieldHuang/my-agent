@@ -7,33 +7,12 @@
 """
 import locale
 import logging
-import os
 import subprocess
 import sys
 
 log = logging.getLogger("my-agent")
 
-
-def _env_int(name: str, default: int, minimum: int = 500) -> int:
-    """讀取整數環境變數；沒設、格式錯或過小時退回預設值。"""
-    raw = os.getenv(name)
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        log.warning("%s 不是整數（%r），改用預設 %d", name, raw, default)
-        return default
-    if value < minimum:
-        log.warning("%s=%d 太小，改用下限 %d", name, value, minimum)
-        return minimum
-    return value
-
-
-# 工具輸出灌進 context 的上限。預設 8000 對讀檔案偏小——超過的部分
-# 模型完全看不到，而它只會收到「已截斷」這幾個字，不知道自己漏了什麼。
-# 用 MAX_SHELL_OUTPUT 依模型的 context 大小調整。
-MAX_OUTPUT = _env_int("MAX_SHELL_OUTPUT", 8000)
+MAX_OUTPUT = 8000
 
 
 def _decode_candidates() -> list[str]:
@@ -166,13 +145,6 @@ def call_shell_tool(name: str, args: dict, confirm=None) -> str:
     output = output.strip() or "(沒有輸出)"
 
     if len(output) > MAX_OUTPUT:
-        # 明講截掉多少，模型才知道自己沒看完、可以改用分段或別的方式取得
-        total = len(output)
-        output = (
-            output[:MAX_OUTPUT]
-            + f"\n\n…（輸出共 {total} 字元，已截斷至 {MAX_OUTPUT}，"
-              f"後面 {total - MAX_OUTPUT} 字元未顯示。"
-              "需要完整內容請分段取得，或調高 MAX_SHELL_OUTPUT。）"
-        )
+        output = output[:MAX_OUTPUT] + "\n…（輸出過長，已截斷）"
 
     return f"exit code: {proc.returncode}\n{output}"
