@@ -261,6 +261,19 @@ MY_AGENT_LOG_LEVEL=DEBUG
 MAX_TOOL_ROUNDS=25
 ```
 
+**Q: 讀長檔案或網頁時，模型好像沒看到全部內容？**
+
+工具輸出有長度上限，超過的部分不會送給模型（它會收到一句說明，
+標示原始長度與截掉多少）。在 `.env` 調高：
+
+```env
+MAX_SHELL_OUTPUT=30000    # run_command 的輸出，預設 8000
+BROWSER_MAX_TEXT=20000    # 瀏覽器抓的頁面內容，預設 6000
+```
+
+調太高會把模型的 context 塞爆，長度要配合你用的模型。`BROWSER_MAX_TEXT`
+要設在 `mcp_config.yaml` 裡 browser server 的 `env` 區段，那是獨立的行程。
+
 **Q: token 存在哪裡？**
 
 優先存入系統憑證管理員（Windows Credential Manager / macOS Keychain），失敗時 fallback 到 `~/.my-agent/token.json`。

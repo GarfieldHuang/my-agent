@@ -13,6 +13,8 @@
 
 環境變數（可選）：
     BROWSER_HEADLESS=1        無頭模式（預設開視窗）
+    BROWSER_MAX_TEXT=6000     回傳給模型的頁面內容上限（字元）
+                              超過的部分模型看不到，內容多的網站可調高
     BROWSER_CDP_URL=http://localhost:9222
         連接既有的瀏覽器（保留登入狀態）。先手動啟動：
         msedge.exe --remote-debugging-port=9222
@@ -28,7 +30,20 @@ _pw = None
 _browser = None
 _page = None
 
-MAX_TEXT = 6000
+def _env_int(name: str, default: int, minimum: int = 500) -> int:
+    """讀取整數環境變數；沒設、格式錯或過小時退回預設值。"""
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return max(int(raw), minimum)
+    except (TypeError, ValueError):
+        return default
+
+
+# 回傳給模型的頁面內容上限。預設 6000 對內容豐富的網頁偏小，
+# 超過的部分模型看不到。用 BROWSER_MAX_TEXT 依 context 大小調整。
+MAX_TEXT = _env_int("BROWSER_MAX_TEXT", 6000)
 
 # 可互動元素的標記 JS：加上 data-mcp-ref 屬性並回傳清單
 _SNAPSHOT_JS = """
@@ -116,7 +131,11 @@ async def browser_snapshot() -> str:
     if not elements:
         return f"{state}\n\n（頁面上沒有可互動元素）"
     if len(elements) > MAX_TEXT:
-        elements = elements[:MAX_TEXT] + "\n…（元素太多已截斷）"
+        total = len(elements)
+        elements = elements[:MAX_TEXT] + (
+            f"\n…（元素清單共 {total} 字元，已截斷至 {MAX_TEXT}。"
+            "可調高 BROWSER_MAX_TEXT。）"
+        )
     return f"{state}\n\n可互動元素：\n{elements}"
 
 
@@ -127,7 +146,11 @@ async def browser_get_text() -> str:
     text = await page.evaluate("() => document.body ? document.body.innerText : ''")
     text = text.strip()
     if len(text) > MAX_TEXT:
-        text = text[:MAX_TEXT] + "\n…（內容太長已截斷）"
+        total = len(text)
+        text = text[:MAX_TEXT] + (
+            f"\n…（頁面文字共 {total} 字元，已截斷至 {MAX_TEXT}，"
+            f"後面 {total - MAX_TEXT} 字元未顯示。可調高 BROWSER_MAX_TEXT。）"
+        )
     return f"{await _page_state(page)}\n\n{text}"
 
 
