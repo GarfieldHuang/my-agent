@@ -12,6 +12,7 @@ commands/agents、GUI 圖檔）。user_dir()（~/.my-agent，使用者自己
 產生的圖片/文件等），把「更新出錯」的風險降到最低。
 """
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -236,15 +237,55 @@ def relaunch_and_exit() -> None:
     if is_frozen():
         subprocess.Popen([sys.executable], creationflags=creationflags)
     elif is_portable():
-        start_bat = bundle_dir().parent / "start.bat"
-        subprocess.Popen(
-            ["cmd", "/c", "start", "", str(start_bat)],
-            cwd=str(bundle_dir().parent), creationflags=creationflags,
-        )
+        _relaunch_portable(creationflags)
     else:
-        subprocess.Popen(
-            [sys.executable, str(bundle_dir() / "main.py")],
-            cwd=str(bundle_dir()), creationflags=creationflags,
-        )
+        _relaunch_dev(creationflags)
 
     sys.exit(0)
+
+
+def _relaunch_portable(creationflags: int) -> None:
+    """直接呼叫 pythonw.exe，不透過 cmd /c start 那層。
+
+    `start.bat` 本身就是設計給人「雙擊」用的：它最後一行也是呼叫
+    pythonw.exe（沒有主控台），但若改成程式呼叫 `cmd /c start "" start.bat`，
+    `start` 這個指令的語意就是「開一個新視窗執行」——不管有沒有加
+    DETACHED_PROCESS 都一樣，因為那個視窗是 cmd 內部另外跟 Windows
+    要的，不吃我們這個 subprocess 呼叫的旗標。所以會跳出一個空的
+    主控台視窗，這正是使用者回報的症狀。
+    直接照 start.bat 的邏輯自己呼叫 pythonw.exe，就完全不會經過
+    cmd.exe，也就不會有任何視窗閃現。
+    """
+    root = bundle_dir().parent   # 可攜版根目錄（python/、app/、start.bat 所在）
+    pythonw = root / "python" / "pythonw.exe"
+    main_py = bundle_dir() / "main.py"
+
+    if pythonw.exists():
+        env = os.environ.copy()
+        env["PYTHONNOUSERSITE"] = "1"
+        env.pop("PYTHONPATH", None)
+        env.pop("PYTHONHOME", None)
+        subprocess.Popen(
+            [str(pythonw), str(main_py)],
+            cwd=str(root), env=env, creationflags=creationflags,
+        )
+    else:
+        # 找不到內附的 pythonw.exe 才退回雙擊 start.bat 的行為（可能閃一下主控台）
+        start_bat = root / "start.bat"
+        subprocess.Popen(
+            ["cmd", "/c", "start", "", str(start_bat)],
+            cwd=str(root), creationflags=creationflags,
+        )
+
+
+def _relaunch_dev(creationflags: int) -> None:
+    """開發模式：優先用同目錄的 pythonw.exe，避免多跳出一個主控台視窗。"""
+    python = sys.executable
+    pythonw = Path(python).with_name("pythonw.exe")
+    if sys.platform == "win32" and pythonw.exists():
+        python = str(pythonw)
+
+    subprocess.Popen(
+        [python, str(bundle_dir() / "main.py")],
+        cwd=str(bundle_dir()), creationflags=creationflags,
+    )

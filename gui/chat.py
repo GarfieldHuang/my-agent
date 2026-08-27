@@ -1469,8 +1469,9 @@ class ChatView(ctk.CTkFrame):
         """訊息泡泡寬度：依對話區目前實際寬度按比例縮放。
 
         以前寫死 480px，視窗放大後泡泡完全不會變寬，右側留一大片
-        空白、文字卻擠著換行。改成量 msg_frame 目前寬度的 7 成，
-        並夾在 320～1000px 之間（太窄不好讀、太寬一行字太長也不好讀）。
+        空白、文字卻擠著換行。改成量 msg_frame 目前寬度的 8 成，
+        並夾在 320～1600px 之間（太窄不好讀、上限只是防超寬螢幕
+        單行字數失控，正常視窗大小都吃得到接近 8 成）。
         """
         try:
             available = self.msg_frame.winfo_width()
@@ -1481,7 +1482,7 @@ class ChatView(ctk.CTkFrame):
             # 尚未完成排版（例如程式剛啟動時的第一則系統訊息），退回預設值
             return 480
 
-        return min(max(int(available * 0.7), 320), 1000)
+        return min(max(int(available * 0.8), 320), 1600)
 
     def _fit_textbox_height(
         self,
