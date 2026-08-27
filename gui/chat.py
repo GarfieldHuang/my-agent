@@ -1465,6 +1465,24 @@ class ChatView(ctk.CTkFrame):
         """輸入框是常駐元件，設定變更時直接套用（不用像泡泡那樣等下一則訊息）。"""
         self.input.configure(font=ctk.CTkFont(size=self._chat_font_size()))
 
+    def _bubble_width(self) -> int:
+        """訊息泡泡寬度：依對話區目前實際寬度按比例縮放。
+
+        以前寫死 480px，視窗放大後泡泡完全不會變寬，右側留一大片
+        空白、文字卻擠著換行。改成量 msg_frame 目前寬度的 7 成，
+        並夾在 320～1000px 之間（太窄不好讀、太寬一行字太長也不好讀）。
+        """
+        try:
+            available = self.msg_frame.winfo_width()
+        except Exception:
+            available = 0
+
+        if available <= 1:
+            # 尚未完成排版（例如程式剛啟動時的第一則系統訊息），退回預設值
+            return 480
+
+        return min(max(int(available * 0.7), 320), 1000)
+
     def _fit_textbox_height(
         self,
         textbox: ctk.CTkTextbox,
@@ -1581,7 +1599,7 @@ class ChatView(ctk.CTkFrame):
         # （最多 15 行，超過才用泡泡內 scrollbar）
         textbox = ctk.CTkTextbox(
             bubble,
-            width=480,
+            width=self._bubble_width(),
             height=36,
             wrap="word",
             fg_color=background_color,
@@ -1648,7 +1666,7 @@ class ChatView(ctk.CTkFrame):
 
         textbox = ctk.CTkTextbox(
             bubble,
-            width=480,
+            width=self._bubble_width(),
             height=36,
             wrap="word",
             fg_color=("gray82", "gray22"),
