@@ -52,12 +52,28 @@ class SettingsView(ctk.CTkFrame):
             text_color="gray", font=ctk.CTkFont(size=12),
         ).grid(row=0, column=1, padx=(8, 0))
 
-        # 工具呼叫上限
-        ctk.CTkLabel(card, text="工具呼叫上限", font=ctk.CTkFont(weight="bold")).grid(
+        # 對話字體大小
+        ctk.CTkLabel(card, text="對話字體大小", font=ctk.CTkFont(weight="bold")).grid(
             row=2, column=0, padx=20, pady=(10, 6), sticky="w"
         )
+        font_row = ctk.CTkFrame(card, fg_color="transparent")
+        font_row.grid(row=2, column=1, padx=20, pady=(10, 6), sticky="w")
+
+        self.font_size_entry = ctk.CTkEntry(font_row, width=70)
+        self.font_size_entry.grid(row=0, column=0)
+
+        ctk.CTkLabel(
+            font_row,
+            text="訊息泡泡與輸入框的字級，8–32（預設 13）",
+            text_color="gray", font=ctk.CTkFont(size=12),
+        ).grid(row=0, column=1, padx=(8, 0))
+
+        # 工具呼叫上限
+        ctk.CTkLabel(card, text="工具呼叫上限", font=ctk.CTkFont(weight="bold")).grid(
+            row=3, column=0, padx=20, pady=(10, 6), sticky="w"
+        )
         rounds_row = ctk.CTkFrame(card, fg_color="transparent")
-        rounds_row.grid(row=2, column=1, padx=20, pady=(10, 6), sticky="w")
+        rounds_row.grid(row=3, column=1, padx=20, pady=(10, 6), sticky="w")
 
         self.tool_rounds_entry = ctk.CTkEntry(rounds_row, width=70)
         self.tool_rounds_entry.grid(row=0, column=0)
@@ -70,7 +86,7 @@ class SettingsView(ctk.CTkFrame):
 
         # CLI 指令免確認
         ctk.CTkLabel(card, text="CLI 指令", font=ctk.CTkFont(weight="bold")).grid(
-            row=3, column=0, padx=20, pady=(10, 6), sticky="w"
+            row=4, column=0, padx=20, pady=(10, 6), sticky="w"
         )
         self.cli_auto_var = ctk.BooleanVar(value=False)
         ctk.CTkSwitch(
@@ -78,19 +94,19 @@ class SettingsView(ctk.CTkFrame):
             text="免確認直接執行（風險自負；關閉時每次執行前會先詢問）",
             variable=self.cli_auto_var,
             font=ctk.CTkFont(size=12),
-        ).grid(row=3, column=1, padx=20, pady=(10, 6), sticky="w")
+        ).grid(row=4, column=1, padx=20, pady=(10, 6), sticky="w")
 
         # 模型 / 推理強度改到 Chat 頁選擇
         ctk.CTkLabel(
             card,
             text="模型與推理強度請在 Chat 頁下方的選單選擇。",
             text_color="gray", font=ctk.CTkFont(size=12),
-        ).grid(row=4, column=1, padx=20, pady=(0, 6), sticky="w")
+        ).grid(row=5, column=1, padx=20, pady=(0, 6), sticky="w")
 
         # 儲存
         ctk.CTkButton(
             card, text="儲存", command=self._save, width=100
-        ).grid(row=5, column=1, padx=20, pady=(6, 20), sticky="e")
+        ).grid(row=6, column=1, padx=20, pady=(6, 20), sticky="e")
 
         self._load()
 
@@ -102,6 +118,9 @@ class SettingsView(ctk.CTkFrame):
 
         self.bubble_lines_entry.delete(0, "end")
         self.bubble_lines_entry.insert(0, str(cfg.get("bubble_max_lines", 15)))
+
+        self.font_size_entry.delete(0, "end")
+        self.font_size_entry.insert(0, str(cfg.get("chat_font_size", 13)))
 
         import os
         from agent.core import DEFAULT_MAX_TOOL_ROUNDS
@@ -136,11 +155,22 @@ class SettingsView(ctk.CTkFrame):
             )
             return
 
+        try:
+            font_size = int(self.font_size_entry.get().strip())
+            if not (8 <= font_size <= 32):
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning(
+                "數值無效", "對話字體大小請輸入 8–32 之間的整數。"
+            )
+            return
+
         cfg = load_config()
         cfg["system_prompt"]     = self.prompt_box.get("1.0", "end-1c").strip()
         cfg["bubble_max_lines"]  = bubble_lines
         cfg["max_tool_rounds"]   = tool_rounds
         cfg["cli_auto_approve"]  = bool(self.cli_auto_var.get())
+        cfg["chat_font_size"]    = font_size
         save_config(cfg)
 
         if self.app.agent:

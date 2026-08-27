@@ -101,6 +101,7 @@ class ChatView(ctk.CTkFrame):
             input_frame,
             height=52,
             wrap="word",
+            font=ctk.CTkFont(size=self._chat_font_size()),
         )
         
         self.input.grid(
@@ -1431,6 +1432,9 @@ class ChatView(ctk.CTkFrame):
     # ─────────────────────────────────────────────
 
     DEFAULT_BUBBLE_MAX_LINES = 15
+    DEFAULT_CHAT_FONT_SIZE = 13
+    MIN_CHAT_FONT_SIZE = 8
+    MAX_CHAT_FONT_SIZE = 32
 
     def _bubble_max_lines(self) -> int:
         """訊息泡泡的最大顯示行數（config.json 的 bubble_max_lines）。"""
@@ -1445,6 +1449,21 @@ class ChatView(ctk.CTkFrame):
             ))
         except Exception:
             return self.DEFAULT_BUBBLE_MAX_LINES
+
+    def _chat_font_size(self) -> int:
+        """對話視窗的基準字體大小（config.json 的 chat_font_size）。
+        套用到訊息泡泡、輸入框；思考過程面板固定小 2 號。"""
+        from agent.auth import load_config
+
+        try:
+            size = int(load_config().get("chat_font_size", self.DEFAULT_CHAT_FONT_SIZE))
+        except Exception:
+            return self.DEFAULT_CHAT_FONT_SIZE
+        return min(max(size, self.MIN_CHAT_FONT_SIZE), self.MAX_CHAT_FONT_SIZE)
+
+    def _apply_input_font(self):
+        """輸入框是常駐元件，設定變更時直接套用（不用像泡泡那樣等下一則訊息）。"""
+        self.input.configure(font=ctk.CTkFont(size=self._chat_font_size()))
 
     def _fit_textbox_height(
         self,
@@ -1578,7 +1597,7 @@ class ChatView(ctk.CTkFrame):
                 "gray55",
             ),
             activate_scrollbars=True,
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=self._chat_font_size()),
         )
 
         textbox.insert(
@@ -1639,7 +1658,7 @@ class ChatView(ctk.CTkFrame):
             scrollbar_button_color=("gray65", "gray40"),
             scrollbar_button_hover_color=("gray50", "gray55"),
             activate_scrollbars=True,
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=self._chat_font_size()),
         )
         textbox.configure(state="disabled")
         textbox.pack(padx=10, pady=8)
@@ -1746,7 +1765,7 @@ class ChatView(ctk.CTkFrame):
                 "gray55",
             ),
             font=ctk.CTkFont(
-                size=11,
+                size=max(9, self._chat_font_size() - 2),
                 slant="italic",
             ),
             activate_scrollbars=True,
@@ -2061,7 +2080,7 @@ class ChatView(ctk.CTkFrame):
             image=image,
             compound="left",  # 圖片顯示在文字左側
             text_color="gray",
-            font=ctk.CTkFont(size=14),
+            font=ctk.CTkFont(size=self._chat_font_size() + 1),
             wraplength=520,
         )
         label.pack(
@@ -2330,6 +2349,7 @@ class ChatView(ctk.CTkFrame):
 
     def on_show(self):
         self._sync_chat_options()
+        self._apply_input_font()
         self.input.focus_set()
         
 
