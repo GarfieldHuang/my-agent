@@ -437,5 +437,10 @@ class Agent:
             return text
         parts: list = [{"type": "input_text", "text": text}]
         for path in attachments:
-            parts.append(await self.files.upload(path))
+            result = await self.files.upload(path)
+            # PDF 內嵌圖片時 upload() 回傳「文字+多張圖片」的 list，其餘情況是單一 dict
+            if isinstance(result, list):
+                parts.extend(result)
+            else:
+                parts.append(result)
         return parts

@@ -28,14 +28,20 @@ TEXT_DOCUMENT_TYPES = {
 # 嵌入內容的字數上限（含說明文字），避免單一附件灌爆 context
 MAX_DOC_CHARS = 60_000
 
+# PDF 內嵌圖片：張數與邊長上限，避免圖表多的 PDF 把單輪對話灌爆
+MAX_PDF_IMAGES = 12
+MAX_IMAGE_DIMENSION = 1568   # 對齊常見 vision 模型的建議上限
+MIN_IMAGE_DIMENSION = 32     # 小於這個尺寸多半是裝飾用小圖示，略過
+
 
 class FileUploader:
     def __init__(self, client: AsyncOpenAI):
         self.client = client
 
-    async def upload(self, path: str) -> dict:
+    async def upload(self, path: str) -> dict | list[dict]:
         """
-        轉換附件，回傳可放入 messages content 的字典。
+        轉換附件，回傳可放入 messages content 的字典，或多個字典組成的 list
+        （PDF 內嵌圖片時，會是「文字說明 + 數張圖片」）。
         單一附件處理失敗不拋例外——回傳說明性文字，讓對話能繼續進行。
         """
         try:
@@ -48,7 +54,7 @@ class FileUploader:
                 "text": f"[附件「{name}」處理失敗，已略過：{e}]",
             }
 
-    async def _convert(self, path: str) -> dict:
+    async def _convert(self, path: str) -> dict | list[dict]:
         p = Path(path).expanduser().resolve()
         if not p.exists():
             raise FileNotFoundError(f"找不到檔案：{p}")
@@ -80,25 +86,89 @@ class FileUploader:
             return text, False
         return text[:MAX_DOC_CHARS], True
 
-    def _read_pdf(self, p: Path) -> dict:
-        """用 pypdf 逐頁擷取文字（PDF 是二進位格式，不能當純文字讀）。"""
+    def _read_pdf(self, p: Path) -> list[dict]:
+        """用 pypdf 逐頁擷取文字＋內嵌圖片（PDF 是二進位格式，不能當純文字讀）。"""
         from pypdf import PdfReader
 
         reader = PdfReader(str(p))
         page_count = len(reader.pages)
 
         pages_text = []
+        image_parts: list[dict] = []
+        images_skipped = 0
+
         for page in reader.pages:
             pages_text.append(page.extract_text() or "")
+
+            try:
+                page_images = list(page.images)
+            except Exception:
+                page_images = []
+
+            for img in page_images:
+                if len(image_parts) >= MAX_PDF_IMAGES:
+                    images_skipped += 1
+                    continue
+                part = self._pdf_image_to_part(img)
+                if part is not None:
+                    image_parts.append(part)
+                else:
+                    images_skipped += 1
+
         text = "\n\n".join(pages_text).strip()
 
-        if not text:
-            text = "（此 PDF 擷取不到文字，可能是掃描影像檔，需要 OCR。）"
+        if not text and not image_parts:
+            text = "（此 PDF 擷取不到文字也沒有內嵌圖片，可能是掃描影像檔，需要 OCR。）"
+        elif not text:
+            text = "（此 PDF 沒有文字層，內容以下方擷取到的內嵌圖片呈現。）"
 
         text, truncated = self._truncate(text)
         note = f"[{p.name}]（PDF，共 {page_count} 頁"
-        note += "，內容過長已截斷）" if truncated else "）"
-        return {"type": "input_text", "text": f"{note}\n{text}"}
+        details = []
+        if truncated:
+            details.append("文字過長已截斷")
+        if image_parts:
+            details.append(f"含 {len(image_parts)} 張內嵌圖片")
+        if images_skipped:
+            details.append(f"另有 {images_skipped} 張圖片因數量/尺寸限制未附上")
+        note += ("，" + "；".join(details)) if details else ""
+        note += "）"
+
+        parts: list[dict] = [{"type": "input_text", "text": f"{note}\n{text}"}]
+        parts.extend(image_parts)
+        return parts
+
+    @staticmethod
+    def _pdf_image_to_part(img) -> dict | None:
+        """把 pypdf 的內嵌圖片物件轉成 input_image；濾掉太小的裝飾圖、過大的縮圖。"""
+        import base64
+        import io
+
+        try:
+            from PIL import Image
+            pil_img = Image.open(io.BytesIO(img.data))
+            pil_img.load()
+        except Exception:
+            return None
+
+        width, height = pil_img.size
+        if width < MIN_IMAGE_DIMENSION or height < MIN_IMAGE_DIMENSION:
+            return None   # 多半是裝飾用小圖示/線條，略過
+
+        if max(width, height) > MAX_IMAGE_DIMENSION:
+            scale = MAX_IMAGE_DIMENSION / max(width, height)
+            pil_img = pil_img.resize(
+                (max(1, round(width * scale)), max(1, round(height * scale))),
+                Image.LANCZOS,
+            )
+
+        if pil_img.mode not in ("RGB", "L"):
+            pil_img = pil_img.convert("RGB")
+
+        buf = io.BytesIO()
+        pil_img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        return {"type": "input_image", "image_url": f"data:image/png;base64,{b64}"}
 
     def _read_text_file(self, p: Path) -> dict:
         text = p.read_text(errors="replace")
