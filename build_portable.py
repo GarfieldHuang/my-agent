@@ -42,6 +42,7 @@ APP_ITEMS = [
     "agents",
     "mcp_config.example.yaml",
     ".env.example",
+    "requirements.txt",   # 讓「自動更新」之後能對照/補裝新套件
 ]
 
 START_BAT = """@echo off
@@ -97,9 +98,12 @@ def main() -> int:
     target_sp = OUT / "python" / "Lib" / "site-packages"
     target_sp.mkdir(parents=True, exist_ok=True)
     for item in VENV_SITE_PACKAGES.iterdir():
-        if item.name in {"__pycache__", "pip", "setuptools", "pkg_resources", "wheel", "PyInstaller"}:
+        # pip/setuptools/wheel 保留：自動更新之後要能在原地補裝新套件
+        # （agent/updater.py 的 _maybe_update_deps 靠 python -m pip 運作）。
+        # PyInstaller 只是舊的打包工具鏈，純屬佔空間，跳過。
+        if item.name in {"__pycache__", "PyInstaller"}:
             continue
-        if item.name.startswith(("pip-", "setuptools-", "wheel-", "pyinstaller")):
+        if item.name.startswith("pyinstaller"):
             continue
         dest = target_sp / item.name
         if item.is_dir():
