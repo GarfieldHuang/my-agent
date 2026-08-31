@@ -47,6 +47,19 @@ SCOPE        = "openid profile email offline_access"
 # ChatGPT 訂閱後端（走 Plus/Pro 配額，不需要 API 帳戶餘額）
 CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
+# ── 授權流程參數（登入失敗時的調整旋鈕）──────────
+# codex_cli_simplified_flow 會讓 OpenAI 在伺服器端多做一次 token
+# 交換，失敗時瀏覽器會停在他們自己的錯誤頁（token_exchange_failed），
+# 根本不會導回本機 callback，程式端偵測不到也無從重試。
+# 關掉它就走標準 OAuth code flow，改由本程式自己拿 code 換 token。
+#
+# originator 則是 OpenAI 用來識別呼叫端的字串。這兩個都可能因為
+# 對方調整白名單而突然不被接受，所以留成環境變數方便當場試。
+ORIGINATOR = os.getenv("OPENAI_ORIGINATOR", "my-agent")
+USE_SIMPLIFIED_FLOW = os.getenv(
+    "OPENAI_CODEX_SIMPLIFIED_FLOW", "1"
+).strip().lower() not in ("0", "false", "no", "off")
+
 log = logging.getLogger("my-agent")
 
 KEYCHAIN_SERVICE = "my-agent"
@@ -152,7 +165,7 @@ def _browser_oauth(client_id: str, on_auth_url=None, cancel_event=None) -> dict:
     verifier, challenge = _pkce_pair()
     expected_state = secrets.token_urlsafe(16)
 
-    auth_url = AUTH_URL + "?" + urlencode({
+    params = {
         "response_type":              "code",
         "client_id":                  client_id,
         "redirect_uri":               REDIRECT_URI,
@@ -162,9 +175,16 @@ def _browser_oauth(client_id: str, on_auth_url=None, cancel_event=None) -> dict:
         "code_challenge_method":      "S256",
         # OpenAI 專用參數（參考 openclaw 實作）
         "id_token_add_organizations": "true",
-        "codex_cli_simplified_flow":  "true",
-        "originator":                 "my-agent",
-    })
+        "originator":                 ORIGINATOR,
+    }
+    if USE_SIMPLIFIED_FLOW:
+        params["codex_cli_simplified_flow"] = "true"
+
+    log.info(
+        "OAuth 授權流程：originator=%s simplified_flow=%s",
+        ORIGINATOR, USE_SIMPLIFIED_FLOW,
+    )
+    auth_url = AUTH_URL + "?" + urlencode(params)
 
     bucket: dict = {}
     app = FastAPI()
