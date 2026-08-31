@@ -56,6 +56,13 @@ CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 # originator 則是 OpenAI 用來識別呼叫端的字串。這兩個都可能因為
 # 對方調整白名單而突然不被接受，所以留成環境變數方便當場試。
 ORIGINATOR = os.getenv("OPENAI_ORIGINATOR", "my-agent")
+
+# id_token_add_organizations 要求 OpenAI 把組織資訊寫進 ID token。
+# 公司 Business / Enterprise workspace 若對此有限制，這一步就是
+# token_exchange_failed 的來源。設 0 可以不要求組織資訊。
+ADD_ORGANIZATIONS = os.getenv(
+    "OPENAI_ADD_ORGANIZATIONS", "1"
+).strip().lower() not in ("0", "false", "no", "off")
 USE_SIMPLIFIED_FLOW = os.getenv(
     "OPENAI_CODEX_SIMPLIFIED_FLOW", "1"
 ).strip().lower() not in ("0", "false", "no", "off")
@@ -174,15 +181,16 @@ def _browser_oauth(client_id: str, on_auth_url=None, cancel_event=None) -> dict:
         "code_challenge":             challenge,
         "code_challenge_method":      "S256",
         # OpenAI 專用參數（參考 openclaw 實作）
-        "id_token_add_organizations": "true",
         "originator":                 ORIGINATOR,
     }
+    if ADD_ORGANIZATIONS:
+        params["id_token_add_organizations"] = "true"
     if USE_SIMPLIFIED_FLOW:
         params["codex_cli_simplified_flow"] = "true"
 
     log.info(
-        "OAuth 授權流程：originator=%s simplified_flow=%s",
-        ORIGINATOR, USE_SIMPLIFIED_FLOW,
+        "OAuth 授權流程：originator=%s simplified_flow=%s add_orgs=%s",
+        ORIGINATOR, USE_SIMPLIFIED_FLOW, ADD_ORGANIZATIONS,
     )
     auth_url = AUTH_URL + "?" + urlencode(params)
 

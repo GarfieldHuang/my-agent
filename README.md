@@ -239,12 +239,26 @@ start.bat
 **Q: 想換模型？**
 GUI 的「設定」分頁，或 `venv\Scripts\python.exe main.py setup`。
 
-**Q: 沒有 ChatGPT Plus/Pro，只有 API Key？**
+**Q: 登入時出現 `token_exchange_failed`？**
 
-在 `.env` 加入（可從 `.env.example` 複製）：
+這是 OpenAI 授權伺服器端的錯誤，發生在導回本機之前，程式端偵測不到。
+在 `.env` 依序試以下開關（可攜版的 `.env` 在 `~/.my-agent/`）：
+
 ```env
-OPENAI_API_KEY=sk-...
+OPENAI_CODEX_SIMPLIFIED_FLOW=0    # 跳過伺服器端的 token 交換
+OPENAI_ADD_ORGANIZATIONS=0        # 不要求把組織資訊寫進 ID token
+OPENAI_ORIGINATOR=codex_cli_rs    # 換呼叫端識別字串
 ```
+
+每次改完看 log 確認有生效：
+
+```bash
+grep "OAuth 授權流程" agent.log
+```
+
+都無效的話，多半是該 ChatGPT 帳號沒有 Codex 存取權——公司
+Business / Enterprise workspace 由管理員控管。先到 chatgpt.com
+確認登入的是哪個帳號、該帳號能不能用 Codex。
 
 **Q: 要看詳細的執行紀錄？**
 
