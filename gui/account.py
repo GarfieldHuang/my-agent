@@ -97,7 +97,10 @@ class AccountView(ctk.CTkFrame):
                 text_color=("gray10", "gray90")
             )
         
-            self.login_btn.configure(text="重新登入")
+            # 一律恢復可按：_refresh 是唯一反映目前帳號狀態的地方，
+            # 只改文字不改 state 的話，登入中途失敗後按登出，
+            # 按鈕會維持反白且再也按不下去，只能重開程式。
+            self.login_btn.configure(text="重新登入", state="normal")
         
         else:
             self.status_icon.configure(
@@ -110,7 +113,10 @@ class AccountView(ctk.CTkFrame):
                 text_color="gray"
             )
         
-            self.login_btn.configure(text="登入 OpenAI 帳號")
+            self.login_btn.configure(
+                text="登入 OpenAI 帳號",
+                state="normal",
+            )
 
     def on_show(self):
         self._refresh()
@@ -118,6 +124,14 @@ class AccountView(ctk.CTkFrame):
     # ── 登入 ─────────────────────────────────────
 
     def _login(self):
+        # 取消上一次還沒結束的登入，否則它的 callback server 會一直
+        # 占著 port 1455，下一次登入綁不上而整個流程走不下去。
+        if getattr(self, "_login_cancel", None) is not None:
+            self._login_cancel.set()
+
+        self._login_cancel = threading.Event()
+        cancel = self._login_cancel
+
         self.login_btn.configure(state="disabled", text="登入中…")
         self.status_icon.configure(text="⏳")
         # 這裡還沒真的開瀏覽器——實際結果由 on_auth_url 回報後才更新。
@@ -134,7 +148,10 @@ class AccountView(ctk.CTkFrame):
         def _do():
             try:
                 from agent.auth import get_access_token
-                get_access_token(on_auth_url=_on_auth_url)
+                get_access_token(
+                    on_auth_url=_on_auth_url,
+                    cancel_event=cancel,
+                )
                 self.app.after(0, self._on_login_ok)
             except Exception as e:
                 self.app.after(0, lambda: self.show_error(str(e)))
@@ -179,6 +196,12 @@ class AccountView(ctk.CTkFrame):
 
     def _logout(self):
         from agent.auth import logout
+
+        # 登入進行到一半就按登出：一併中止，讓 callback server 收掉
+        if getattr(self, "_login_cancel", None) is not None:
+            self._login_cancel.set()
+            self._login_cancel = None
+
         logout()
         self.app.agent    = None
         self.app.mcp      = None

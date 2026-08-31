@@ -139,11 +139,15 @@ def _try_refresh(token: dict, client_id: str) -> dict | None:
 
 # ── 瀏覽器 OAuth 流程 ─────────────────────────────
 
-def _browser_oauth(client_id: str, on_auth_url=None) -> dict:
+def _browser_oauth(client_id: str, on_auth_url=None, cancel_event=None) -> dict:
     """開瀏覽器讓用戶用 ChatGPT 帳號授權，回傳 token dict。
 
     on_auth_url：callable(url, opened) — 網址備妥後回報，讓 GUI 顯示
     真實狀態；瀏覽器開不起來時使用者才拿得到網址可以自己貼。
+
+    cancel_event：threading.Event — 設起來就中止等待並關掉 callback
+    server。使用者放棄登入時若不收掉，它會一直占著 port 1455，
+    下一次登入綁不上而整個流程走不下去。
     """
     verifier, challenge = _pkce_pair()
     expected_state = secrets.token_urlsafe(16)
@@ -266,6 +270,11 @@ def _browser_oauth(client_id: str, on_auth_url=None) -> dict:
         if "error" in bucket:
             server.should_exit = True
             raise RuntimeError(f"授權未完成：{bucket['error']}")
+
+        # 使用者放棄登入（按了登出或重新登入）：收掉 server 釋放 port
+        if cancel_event is not None and cancel_event.is_set():
+            server.should_exit = True
+            raise RuntimeError("登入已取消。")
         # GUI（尤其可攜版的 pythonw.exe）沒有 stdin，input() 會直接拋
         # 例外把整個登入流程炸掉。只有終端機模式才走手動貼上這條路；
         # GUI 端靠 on_auth_url 拿到網址自己顯示。
@@ -297,7 +306,7 @@ def _browser_oauth(client_id: str, on_auth_url=None) -> dict:
 
 # ── 主要 API ──────────────────────────────────────
 
-def get_access_token(on_auth_url=None) -> str:
+def get_access_token(on_auth_url=None, cancel_event=None) -> str:
     """取得有效 access token；必要時開瀏覽器重新登入。
 
     on_auth_url 會原樣傳給 _browser_oauth，只有真的要重新授權時才觸發。
@@ -314,7 +323,7 @@ def get_access_token(on_auth_url=None) -> str:
         if refreshed:
             return refreshed["access_token"]
 
-    token = _browser_oauth(client_id, on_auth_url)
+    token = _browser_oauth(client_id, on_auth_url, cancel_event)
     _save_token(token)
     print("[Auth] ✓ 登入成功！\n")
     return token["access_token"]
