@@ -146,14 +146,14 @@ def _browser_oauth(client_id: str, on_auth_url=None) -> dict:
     真實狀態；瀏覽器開不起來時使用者才拿得到網址可以自己貼。
     """
     verifier, challenge = _pkce_pair()
-    state = secrets.token_urlsafe(16)
+    expected_state = secrets.token_urlsafe(16)
 
     auth_url = AUTH_URL + "?" + urlencode({
         "response_type":              "code",
         "client_id":                  client_id,
         "redirect_uri":               REDIRECT_URI,
         "scope":                      SCOPE,
-        "state":                      state,
+        "state":                      expected_state,
         "code_challenge":             challenge,
         "code_challenge_method":      "S256",
         # OpenAI 專用參數（參考 openclaw 實作）
@@ -165,14 +165,46 @@ def _browser_oauth(client_id: str, on_auth_url=None) -> dict:
     bucket: dict = {}
     app = FastAPI()
 
-    @app.get("/auth/callback")
-    async def callback(code: str, state: str = ""):
-        bucket["code"] = code
+    def _page(color: str, message: str) -> HTMLResponse:
         return HTMLResponse(
             "<h1 style='font-family:sans-serif;text-align:center;"
-            "padding-top:20vh;color:#10a37f'>"
-            "✓ 認證成功！請關閉此視窗回到終端機。</h1>"
+            f"padding-top:20vh;color:{color}'>{message}</h1>"
         )
+
+    @app.get("/auth/callback")
+    async def callback(
+        code: str = "",
+        state: str = "",
+        error: str = "",
+        error_description: str = "",
+    ):
+        # error / code 都設成選填：授權被拒時 OpenAI 只帶 error 回來，
+        # 若把 code 宣告成必填，FastAPI 會直接回 422 驗證錯誤頁，
+        # 使用者只看到一堆 JSON，不知道發生什麼事。
+        if error:
+            log.error("OAuth 被拒絕：%s %s", error, error_description)
+            bucket["error"] = error_description or error
+            return _page("#c0392b", f"✗ 授權未完成：{error}")
+
+        # state 必須是本次流程產生的那一組。沒有這個檢查的話，
+        # 另一個視窗（或另一個 my-agent 實例）的授權碼也會被收下，
+        # 拿去換 token 時因為 PKCE verifier 不同而失敗，
+        # 錯誤訊息卻完全看不出真正的原因。
+        if state != expected_state:
+            log.error("OAuth state 不符（可能是舊分頁或另一個實例）")
+            return _page(
+                "#c0392b",
+                "✗ 驗證碼不符。<br>"
+                "這通常是因為此分頁是舊的授權頁，"
+                "或同時開了兩個 My Agent。<br>"
+                "請關閉所有相關分頁與程式，重新登入一次。",
+            )
+
+        if not code:
+            return _page("#c0392b", "✗ 沒有收到授權碼。")
+
+        bucket["code"] = code
+        return _page("#10a37f", "✓ 認證成功！請關閉此視窗回到 My Agent。")
 
     # log_config=None 是必要的：uvicorn 預設的 log formatter 在初始化時
     # 執行 sys.stdout.isatty()，而可攜版用 pythonw.exe 啟動時 sys.stdout
@@ -184,6 +216,23 @@ def _browser_oauth(client_id: str, on_auth_url=None) -> dict:
     ))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+
+    # 確認 callback server 真的起來了。port 1455 被占用時（多半是前一次
+    # 登入沒收乾淨的行程還掛在那），uvicorn 只會在 daemon thread 裡拋
+    # WinError 10048 然後靜靜死掉——主流程毫不知情，照樣開瀏覽器，
+    # 授權碼被舊行程接走，這邊傻等五分鐘才逾時。
+    for _ in range(30):
+        if server.started:
+            break
+        if not thread.is_alive():
+            raise RuntimeError(
+                "無法在 port 1455 啟動登入用的本機服務。"
+                "多半是還有另一個 My Agent 正在執行（或前一次登入沒有正常結束）。"
+                "請關閉所有 My Agent 視窗後再試一次。"
+            )
+        time.sleep(0.1)
+    else:
+        raise RuntimeError("登入用的本機服務啟動逾時，請重試。")
 
     # 嘗試開啟瀏覽器；在遠端/VPS 環境或瀏覽器關聯損壞時可能失敗
     try:
@@ -213,6 +262,10 @@ def _browser_oauth(client_id: str, on_auth_url=None) -> dict:
         if "code" in bucket:
             server.should_exit = True
             break
+        # 使用者在授權頁按了拒絕：立刻收工並說明，不要空等到逾時
+        if "error" in bucket:
+            server.should_exit = True
+            raise RuntimeError(f"授權未完成：{bucket['error']}")
         # GUI（尤其可攜版的 pythonw.exe）沒有 stdin，input() 會直接拋
         # 例外把整個登入流程炸掉。只有終端機模式才走手動貼上這條路；
         # GUI 端靠 on_auth_url 拿到網址自己顯示。
